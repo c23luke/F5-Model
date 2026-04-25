@@ -477,7 +477,7 @@ def matchups_cache_file_path() -> str:
 
 def save_matchups_cache(matchups: List[Matchup], parse_mode: str) -> None:
     payload = {
-        "saved_at": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "saved_at": app_now().strftime("%Y-%m-%d %H:%M:%S"),
         "parse_mode": parse_mode,
         "matchups": [matchup_to_dict(m) for m in matchups],
     }
@@ -4596,6 +4596,12 @@ def annotate_with_ticket_status(df: pd.DataFrame, tracker_df: pd.DataFrame) -> p
     if tracker_df.empty:
         return out
     t = tracker_df.copy()
+    # Command-center cards should reflect today's ticket state only.
+    if "bet_date" in t.columns:
+        today_str = app_today().strftime("%Y-%m-%d")
+        t = t[t["bet_date"].astype(str) == today_str].copy()
+    if t.empty:
+        return out
     t["logged_at_dt"] = pd.to_datetime(t.get("logged_at"), errors="coerce")
     t = t.sort_values(by=["logged_at_dt"], ascending=False)
     latest: Dict[Tuple[str, str], str] = {}
@@ -5105,11 +5111,16 @@ def _ticket_badge_for_row(row: pd.Series, tracker_df: pd.DataFrame) -> str:
     ]
     if subset.empty:
         return ""
+    subset = subset.copy()
+    subset["logged_at_dt"] = pd.to_datetime(subset.get("logged_at"), errors="coerce")
+    subset = subset.sort_values(by=["logged_at_dt"], ascending=False)
     status = str(subset.iloc[0].get("status", "")).strip().lower()
-    if status == "won":
+    if status in {"win", "won"}:
         return "WON"
-    if status == "lost":
+    if status in {"loss", "lost"}:
         return "LOST"
+    if status in {"push", "p"}:
+        return "PUSH"
     if status in {"open", "in progress", "pending"} or not status:
         return "OPEN"
     return status.upper()
@@ -5732,6 +5743,46 @@ def main() -> None:
                     render_featured_pick_cards_html(month_model_show, today_score_map, str(mo["System"]))
                 else:
                     st.caption("No qualified plays today for this model.")
+
+        # Bottom-of-page tracker: every home-screen best bet (deduped) with live game/ticket state.
+        render_premium_section(
+            "TRACKER",
+            "All Bets",
+            "Every home-screen best bet, deduped and tracked live.",
+            tag="Summary",
+        )
+        home_pick_sources = [
+            all_best_bets_df,
+            featured_show,
+            week_model_show,
+            month_model_show,
+        ]
+        home_rows: List[pd.DataFrame] = []
+        for src in home_pick_sources:
+            if src is None or src.empty:
+                continue
+            needed = {"Matchup", "Suggested F5 Pick"}
+            if not needed.issubset(set(src.columns)):
+                continue
+            home_rows.append(src[["Matchup", "Suggested F5 Pick"]].copy())
+
+        if not home_rows:
+            st.caption("No home-screen bets to track yet.")
+        else:
+            home_picks_df = (
+                pd.concat(home_rows, ignore_index=True)
+                .drop_duplicates(subset=["Matchup", "Suggested F5 Pick"], keep="first")
+                .reset_index(drop=True)
+            )
+            home_today_summary = today_summary_for_picks(tracker_df, home_picks_df)
+            home_all_tracker = dedupe_tracker_tickets(tracker_subset_for_picks(tracker_df, home_picks_df))
+            home_all_summary = summary_from_tracker(home_all_tracker)
+
+            t1, t2, t3, t4 = st.columns(4)
+            t1.metric("Tracked Bets", len(home_picks_df))
+            t2.metric("Today W-L-T", home_today_summary["record"])
+            t3.metric("All-time W-L-T", home_all_summary["record"])
+            t4.metric("Open", home_all_summary["open"])
 
     # ---------------------- TAB 1: RESEARCH ----------------------
     with tabs[1]:
