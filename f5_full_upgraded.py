@@ -5584,6 +5584,8 @@ def main() -> None:
     today_best_tracker_summary = summary_from_tracker(today_best_tracker)
     full_tracker_summary = summary_from_tracker(dedupe_tracker_tickets(tracker_df))
     today_100_summary = today_summary_for_picks(tracker_df, confidence_100_bets_df)
+    full_100_tracker = dedupe_tracker_tickets(tracker_subset_for_picks(tracker_df, confidence_100_bets_df))
+    full_100_summary = summary_from_tracker(full_100_tracker)
 
     # Unified, tier-tagged best-bets list — what powers the Today tab.
     all_best_bets_df = build_all_best_bets(
@@ -5626,9 +5628,9 @@ def main() -> None:
 
         # KPI strip — clean, just 4 metrics
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Today W-L", today_slip_summary["record"])
-        k2.metric("Today WR", f"{today_slip_summary['win_rate']:.1f}%")
-        k3.metric("All-time W-L", full_tracker_summary["record"])
+        k1.metric("Today W-L", today_100_summary["record"])
+        k2.metric("Today WR", f"{today_100_summary['win_rate']:.1f}%")
+        k3.metric("All-time W-L", full_100_summary["record"])
         k4.metric("Locks today", len(confidence_100_bets_df))
 
         # Live F5 scoreboard strip — only matchups on today's slip
