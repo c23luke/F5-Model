@@ -19,6 +19,7 @@ MLB_STATS_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule"
 MLB_PLAYER_STATS_URL = "https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
 TRACKER_FILE = "f5_tracker.csv"
 CARD_TRACKER_FILE = "f5_card_tracker.csv"
+LOCK_TRACKER_FILE = "f5_lock_tracker.csv"
 BACKTEST_CACHE_FILE = "f5_backtest_cache.json"
 MATCHUPS_CACHE_FILE = "f5_matchups_cache.json"
 ADMIN_BACKTEST_KEY = "thatsbaseball"
@@ -1000,6 +1001,10 @@ def card_tracker_file_path() -> str:
     return os.path.join(os.path.dirname(__file__), CARD_TRACKER_FILE)
 
 
+def lock_tracker_file_path() -> str:
+    return os.path.join(os.path.dirname(__file__), LOCK_TRACKER_FILE)
+
+
 def ensure_tracker_file() -> None:
     path = tracker_file_path()
     if os.path.exists(path):
@@ -1024,6 +1029,28 @@ def ensure_tracker_file() -> None:
 
 def ensure_card_tracker_file() -> None:
     path = card_tracker_file_path()
+    if os.path.exists(path):
+        return
+    cols = [
+        "bet_date",
+        "system_name",
+        "matchup",
+        "away_team",
+        "home_team",
+        "pick_team",
+        "suggested_pick",
+        "confidence",
+        "edge_score",
+        "status",
+        "result_note",
+        "logged_at",
+        "resolved_at",
+    ]
+    pd.DataFrame(columns=cols).to_csv(path, index=False)
+
+
+def ensure_lock_tracker_file() -> None:
+    path = lock_tracker_file_path()
     if os.path.exists(path):
         return
     cols = [
@@ -1142,12 +1169,65 @@ def load_card_tracker() -> pd.DataFrame:
     return df
 
 
+def load_lock_tracker() -> pd.DataFrame:
+    ensure_lock_tracker_file()
+    path = lock_tracker_file_path()
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        df = pd.DataFrame()
+    if df.empty:
+        return pd.DataFrame(
+            columns=[
+                "bet_date",
+                "system_name",
+                "matchup",
+                "away_team",
+                "home_team",
+                "pick_team",
+                "suggested_pick",
+                "confidence",
+                "edge_score",
+                "status",
+                "result_note",
+                "logged_at",
+                "resolved_at",
+            ]
+        )
+    text_cols = [
+        "bet_date",
+        "system_name",
+        "matchup",
+        "away_team",
+        "home_team",
+        "pick_team",
+        "suggested_pick",
+        "status",
+        "result_note",
+        "logged_at",
+        "resolved_at",
+    ]
+    for c in text_cols:
+        if c not in df.columns:
+            df[c] = ""
+        df[c] = df[c].fillna("").astype(str)
+    for c in ["confidence", "edge_score"]:
+        if c not in df.columns:
+            df[c] = pd.NA
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
 def save_tracker(df: pd.DataFrame) -> None:
     df.to_csv(tracker_file_path(), index=False)
 
 
 def save_card_tracker(df: pd.DataFrame) -> None:
     df.to_csv(card_tracker_file_path(), index=False)
+
+
+def save_lock_tracker(df: pd.DataFrame) -> None:
+    df.to_csv(lock_tracker_file_path(), index=False)
 
 
 @st.cache_data(ttl=60)
@@ -1408,6 +1488,62 @@ def add_card_bets_to_tracker_for_date(
         )
         added += 1
     return out, added
+
+
+def add_lock_bet_to_tracker_for_date(
+    lock_row: Optional[pd.Series],
+    lock_tracker_df: pd.DataFrame,
+    bet_date: dt.date,
+) -> Tuple[pd.DataFrame, int]:
+    if lock_row is None:
+        return lock_tracker_df, 0
+    matchup = str(lock_row.get("Matchup", ""))
+    suggested = str(lock_row.get("Suggested F5 Pick", ""))
+    if not matchup or not suggested or suggested == "No Play":
+        return lock_tracker_df, 0
+    bet_date_str = bet_date.strftime("%Y-%m-%d")
+    out = lock_tracker_df.copy()
+    dup = (
+        (out["bet_date"].astype(str) == bet_date_str)
+        & (out["system_name"].astype(str) == "LOCK | Lock of the Day")
+        & (out["matchup"].astype(str) == matchup)
+        & (out["suggested_pick"].astype(str) == suggested)
+    )
+    if dup.any():
+        return out, 0
+
+    pick_team = suggested.replace("F5 ", "").strip()
+    away_team = matchup.split(" @ ")[0].strip() if " @ " in matchup else ""
+    home_team = matchup.split(" @ ")[1].strip() if " @ " in matchup else ""
+    conf = lock_row.get("Avg Confidence", lock_row.get("Confidence", None))
+    edge = lock_row.get("Consensus Score", lock_row.get("Priority Score", lock_row.get("Edge Score", None)))
+    now_str = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    out = pd.concat(
+        [
+            out,
+            pd.DataFrame(
+                [
+                    {
+                        "bet_date": bet_date_str,
+                        "system_name": "LOCK | Lock of the Day",
+                        "matchup": matchup,
+                        "away_team": away_team,
+                        "home_team": home_team,
+                        "pick_team": pick_team,
+                        "suggested_pick": suggested,
+                        "confidence": float(conf) if pd.notna(conf) else None,
+                        "edge_score": float(edge) if pd.notna(edge) else None,
+                        "status": "open",
+                        "result_note": "",
+                        "logged_at": now_str,
+                        "resolved_at": "",
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    return out, 1
 
 
 def build_missing_tracking_dates(tracker_df: pd.DataFrame, max_backfill_days: int = 30) -> List[dt.date]:
@@ -5594,9 +5730,6 @@ def main() -> None:
     today_best_tracker = dedupe_tracker_tickets(tracker_subset_for_picks(tracker_df, today_betslip_df))
     today_best_tracker_summary = summary_from_tracker(today_best_tracker)
     full_tracker_summary = summary_from_tracker(dedupe_tracker_tickets(tracker_df))
-    today_100_summary = today_summary_for_picks(tracker_df, confidence_100_bets_df)
-    full_100_tracker = dedupe_tracker_tickets(tracker_subset_for_picks(tracker_df, confidence_100_bets_df))
-    full_100_summary = summary_from_tracker(full_100_tracker)
 
     # Unified, tier-tagged best-bets list — what powers the Today tab.
     all_best_bets_df = build_all_best_bets(
@@ -5609,6 +5742,13 @@ def main() -> None:
     all_best_bets_top_row: Optional[pd.Series] = (
         all_best_bets_df.iloc[0] if not all_best_bets_df.empty else None
     )
+    lock_tracker_df = load_lock_tracker()
+    lock_tracker_df, _ = add_lock_bet_to_tracker_for_date(all_best_bets_top_row, lock_tracker_df, app_today())
+    lock_tracker_df = grade_f5_bets(lock_tracker_df)
+    save_lock_tracker(lock_tracker_df)
+    lock_today_df = lock_tracker_df[lock_tracker_df["bet_date"].astype(str) == app_today().strftime("%Y-%m-%d")].copy()
+    lock_today_summary = summary_from_tracker(dedupe_tracker_tickets(lock_today_df))
+    lock_all_time_summary = summary_from_tracker(dedupe_tracker_tickets(lock_tracker_df))
 
     total_qualified = sum(int((df["Qualifies Strategy"] == "Yes").sum()) for df in system_tables.values() if not df.empty)
     # Append slate diagnostics to the Settings popover slot we created earlier.
@@ -5639,9 +5779,9 @@ def main() -> None:
 
         # KPI strip — clean, just 4 metrics
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Today W-L", today_100_summary["record"])
-        k2.metric("Today WR", f"{today_100_summary['win_rate']:.1f}%")
-        k3.metric("All-time W-L", full_100_summary["record"])
+        k1.metric("Today W-L", lock_today_summary["record"])
+        k2.metric("Today WR", f"{lock_today_summary['win_rate']:.1f}%")
+        k3.metric("All-time W-L", lock_all_time_summary["record"])
         k4.metric("Locks today", len(confidence_100_bets_df))
 
         # Live F5 scoreboard strip — only matchups on today's slip
