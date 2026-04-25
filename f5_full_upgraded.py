@@ -5291,8 +5291,7 @@ def main() -> None:
     render_app_theme()
     render_premium_theme()
     st.markdown(
-        '<div class="main-title sa-app-title">STACKED ANALYTICS · F5</div>'
-        '<div class="sa-app-sub">Best bets, ranked. Live F5 scores. Three tabs, no clutter.</div>',
+        '<div class="main-title sa-app-title">STACKED ANALYTICS · F5</div>',
         unsafe_allow_html=True,
     )
 
