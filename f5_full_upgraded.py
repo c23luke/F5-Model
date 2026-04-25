@@ -388,11 +388,12 @@ def parse_from_stats_api(game_date: dt.date) -> List[Matchup]:
     return out
 
 
-@st.cache_data(ttl=60 * 20)
+@st.cache_data(ttl=60)
 def fetch_matchups(_refresh_nonce: int) -> Tuple[List[Matchup], str]:
     try:
         r = requests.get(MLB_URL, headers=HEADERS, timeout=20)
-        r.raise_for_status()
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code}")
         html = r.text
     except Exception as exc:
         raise RuntimeError(f"Failed to fetch MLB probable pitchers: {exc}")
@@ -1137,12 +1138,18 @@ def save_card_tracker(df: pd.DataFrame) -> None:
     df.to_csv(card_tracker_file_path(), index=False)
 
 
-@st.cache_data(ttl=60 * 5)
+@st.cache_data(ttl=60)
 def fetch_scores_for_date(game_date: dt.date) -> Dict[str, Dict[str, Any]]:
     params = {"sportId": 1, "date": game_date.strftime("%Y-%m-%d"), "hydrate": "linescore,team"}
-    r = requests.get(MLB_STATS_SCHEDULE_URL, params=params, headers=HEADERS, timeout=20)
-    r.raise_for_status()
-    data = r.json()
+    try:
+        r = requests.get(MLB_STATS_SCHEDULE_URL, params=params, headers=HEADERS, timeout=20)
+        if r.status_code != 200:
+            st.warning(f"MLB score pull returned HTTP {r.status_code}.")
+            return {}
+        data = r.json()
+    except Exception as exc:
+        st.warning(f"MLB score pull failed: {str(exc)[:120]}")
+        return {}
 
     out: Dict[str, Dict[str, Any]] = {}
     for date_node in data.get("dates", []):
