@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -31,6 +32,17 @@ HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36"
     )
 }
+
+APP_TZ = ZoneInfo("America/New_York")
+
+
+def app_now() -> dt.datetime:
+    """App-wide clock pinned to ET so local/cloud use same date boundary."""
+    return dt.datetime.now(APP_TZ)
+
+
+def app_today() -> dt.date:
+    return app_now().date()
 
 
 @dataclass
@@ -405,7 +417,7 @@ def fetch_matchups(_refresh_nonce: int) -> Tuple[List[Matchup], str]:
     if parsed:
         return parsed, "HTML fallback"
     try:
-        parsed = parse_from_stats_api(dt.date.today())
+        parsed = parse_from_stats_api(app_today())
     except Exception as exc:
         raise RuntimeError(f"Could not parse probable pitchers from MLB page or Stats API: {exc}")
     return parsed, "MLB Stats API fallback"
@@ -497,9 +509,9 @@ def matchups_cache_is_stale(saved_at: Optional[str]) -> bool:
         saved = dt.datetime.strptime(saved_at[:19], "%Y-%m-%d %H:%M:%S")
     except Exception:
         return True
-    if saved.date() != dt.date.today():
+    if saved.date() != app_today():
         return True
-    return (dt.datetime.now() - saved).total_seconds() > 3 * 3600
+    return (app_now().replace(tzinfo=None) - saved).total_seconds() > 3 * 3600
 
 
 def better_side(matchup: Matchup) -> Optional[str]:
@@ -1218,7 +1230,7 @@ def grade_f5_bets(tracker_df: pd.DataFrame) -> pd.DataFrame:
     now_str = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     pending_mask = out["status"].str.lower().eq("open")
     graded_recent_mask = out["status"].str.lower().isin({"win", "loss", "push"})
-    recent_dates = set((dt.date.today() - dt.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(2))
+    recent_dates = set((app_today() - dt.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(2))
     recent_graded_idxs = out.index[graded_recent_mask & out["bet_date"].isin(recent_dates)]
     candidate_dates = set(out.loc[pending_mask, "bet_date"])
     candidate_dates.update(set(out.loc[recent_graded_idxs, "bet_date"]))
@@ -1336,7 +1348,7 @@ def add_bets_to_tracker_for_date(
 
 
 def add_today_bets_to_tracker(system_table: pd.DataFrame, system_name: str, tracker_df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
-    return add_bets_to_tracker_for_date(system_table, system_name, tracker_df, dt.date.today())
+    return add_bets_to_tracker_for_date(system_table, system_name, tracker_df, app_today())
 
 
 def add_card_bets_to_tracker_for_date(
@@ -1399,7 +1411,7 @@ def add_card_bets_to_tracker_for_date(
 
 
 def build_missing_tracking_dates(tracker_df: pd.DataFrame, max_backfill_days: int = 30) -> List[dt.date]:
-    today = dt.date.today()
+    today = app_today()
     if tracker_df.empty or "bet_date" not in tracker_df.columns:
         return [today]
 
@@ -1698,7 +1710,7 @@ def summarize_backtest_stats(stats: Dict[str, Dict[str, float]]) -> pd.DataFrame
 @st.cache_data(ttl=60 * 60 * 8, show_spinner=False)
 def run_system_backtest_multi() -> Dict[str, pd.DataFrame]:
     max_years = 3
-    end_date = dt.date.today() - dt.timedelta(days=1)
+    end_date = app_today() - dt.timedelta(days=1)
     start_date = end_date - dt.timedelta(days=(365 * max_years) - 1)
     system_names = [s.name for s in SYSTEMS]
     windows = {"1Y": 365, "2Y": 730, "3Y": 1095}
@@ -4294,7 +4306,7 @@ def today_summary_for_picks(tracker_df: pd.DataFrame, picks_df: pd.DataFrame) ->
     sub = tracker_subset_for_picks(tracker_df, picks_df)
     if sub.empty:
         return _empty_slip_summary()
-    today_str = dt.date.today().strftime("%Y-%m-%d")
+    today_str = app_today().strftime("%Y-%m-%d")
     sub = sub[sub["bet_date"].astype(str) == today_str].copy()
     if sub.empty:
         return _empty_slip_summary()
@@ -4308,7 +4320,7 @@ def build_today_system_standings(tracker_df: pd.DataFrame, system_names: List[st
         return pd.DataFrame(
             columns=["System", "Record", "Win Rate %", "Graded", "Wins", "Open", "Pushes"]
         )
-    today_str = dt.date.today().strftime("%Y-%m-%d")
+    today_str = app_today().strftime("%Y-%m-%d")
     t = tracker_df[
         (tracker_df["bet_date"].astype(str) == today_str)
         & (tracker_df["system_name"].astype(str).isin(system_names))
@@ -4361,7 +4373,7 @@ def build_system_standings_for_window(
     if out.empty:
         return pd.DataFrame(columns=cols)
     out["bet_date_dt"] = pd.to_datetime(out["bet_date"], errors="coerce")
-    cutoff = pd.Timestamp(dt.date.today() - dt.timedelta(days=max(1, int(days)) - 1))
+    cutoff = pd.Timestamp(app_today() - dt.timedelta(days=max(1, int(days)) - 1))
     out = out[out["bet_date_dt"] >= cutoff].copy()
     if out.empty:
         return pd.DataFrame(columns=cols)
@@ -4420,7 +4432,7 @@ def live_record_for_models(
     if out.empty:
         return {"record": "0-0-0", "win_rate": 0.0, "graded": 0}
     out["bet_date_dt"] = pd.to_datetime(out["bet_date"], errors="coerce")
-    cutoff = pd.Timestamp(dt.date.today() - dt.timedelta(days=lookback_days))
+    cutoff = pd.Timestamp(app_today() - dt.timedelta(days=lookback_days))
     out = out[out["bet_date_dt"] >= cutoff].copy()
     if out.empty:
         return {"record": "0-0-0", "win_rate": 0.0, "graded": 0}
@@ -5085,7 +5097,7 @@ def _ticket_badge_for_row(row: pd.Series, tracker_df: pd.DataFrame) -> str:
         return ""
     matchup = str(row.get("Matchup", ""))
     pick = str(row.get("Suggested F5 Pick", ""))
-    today = dt.date.today().isoformat()
+    today = app_today().isoformat()
     subset = tracker_df[
         (tracker_df["matchup"].astype(str) == matchup)
         & (tracker_df["suggested_pick"].astype(str) == pick)
@@ -5393,7 +5405,7 @@ def main() -> None:
     if len(backfill_dates) > 1:
         st.caption(f"Tracker catch-up: {len(backfill_dates)} day(s).")
     for bet_day in backfill_dates:
-        if bet_day == dt.date.today():
+        if bet_day == app_today():
             day_tables = system_tables
         else:
             try:
@@ -5480,7 +5492,7 @@ def main() -> None:
     }
     card_added = 0
     for card_name, card_df in card_tables.items():
-        card_tracker_df, added = add_card_bets_to_tracker_for_date(card_df, card_name, card_tracker_df, dt.date.today())
+        card_tracker_df, added = add_card_bets_to_tracker_for_date(card_df, card_name, card_tracker_df, app_today())
         card_added += added
     card_tracker_df = grade_f5_bets(card_tracker_df)
     save_card_tracker(card_tracker_df)
@@ -5505,7 +5517,7 @@ def main() -> None:
     confidence_100_tracker = dedupe_tracker_tickets(tracker_subset_for_picks(tracker_df, confidence_100_bets_df))
     confidence_100_summary = summary_with_units(confidence_100_tracker)
     try:
-        today_score_map = fetch_scores_for_date(dt.date.today())
+        today_score_map = fetch_scores_for_date(app_today())
     except Exception:
         today_score_map = {}
     confidence_100_show = annotate_for_command_center(confidence_100_bets_df, today_score_map, tracker_df)
