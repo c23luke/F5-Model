@@ -863,7 +863,59 @@ def eval_mismatch_momentum(m: Matchup) -> Dict[str, Any]:
     }
 
 
+def eval_og(m: Matchup) -> Dict[str, Any]:
+    b = better_side(m)
+    if b is None:
+        return {"qualifies": False, "pick": "No Play", "edge_score": 0.0, "confidence": 0.0}
+    better = side_pitcher(m, b)
+    worse = side_pitcher(m, "home" if b == "away" else "away")
+    era_gap = stat_diff(m, b, "era")
+    whip_gap = stat_diff(m, b, "whip")
+    k_diff = (better.strikeouts or 0) - (worse.strikeouts or 0)
+    rules = (
+        better.era is not None
+        and worse.era is not None
+        and better.era <= 2.75
+        and worse.era >= 4.50
+        and era_gap >= 2.0
+        and k_diff > 0
+        and better.whip is not None
+        and better.whip <= 1.15
+        and whip_gap >= 0.12
+    )
+    if pitcher_sample_score(better) < 0.45 and (better.era or 99) <= 2.20:
+        rules = False
+    score = (
+        max(0.0, (era_gap - 1.5) * 23.0)
+        + max(0.0, (whip_gap - 0.08) * 65.0)
+        + (10.0 if k_diff > 0 else 0.0)
+        + (9.0 if era_gap >= 2.5 else 0.0)
+    )
+    score *= reliability_multiplier(m, b)
+    conf = min(100.0, max(0.0, 24.0 + score))
+    if not rules:
+        conf = max(0.0, conf - 35.0)
+    return {
+        "qualifies": rules,
+        "pick": f"F5 {side_team(m, b)}" if rules else "No Play",
+        "edge_score": round(score, 2),
+        "confidence": round(conf, 1),
+    }
+
+
 SYSTEMS: List[SystemDefinition] = [
+    SystemDefinition(
+        key="og",
+        name="OG",
+        rules=[
+            "ERA gap >= 2.0 minimum (2.5+ is elite)",
+            "Target pitcher <= 2.75 ERA",
+            "Opp pitcher >= 4.50 ERA",
+            "Strikeouts higher on your side",
+            "Plus WHIP quality gate: target <= 1.15 and WHIP gap >= 0.12",
+        ],
+        evaluator=eval_og,
+    ),
     SystemDefinition(
         key="atlas_ace_gap",
         name="Atlas Ace Gap",
