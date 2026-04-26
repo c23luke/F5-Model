@@ -5350,6 +5350,59 @@ def _ticket_badge_for_row(row: pd.Series, tracker_df: pd.DataFrame) -> str:
     return status.upper()
 
 
+def _lock_hit_probability(
+    matchup: str,
+    pick: str,
+    score_map: Dict[str, Dict[str, Any]],
+    base_confidence: float,
+) -> float:
+    """
+    Lightweight in-game estimate for lock outcome.
+    Uses model confidence pregame, then blends in current F5 run differential
+    and inning progress while game is live.
+    """
+    away_team = matchup.split(" @ ")[0].strip() if " @ " in matchup else ""
+    home_team = matchup.split(" @ ")[1].strip() if " @ " in matchup else ""
+    if not away_team or not home_team:
+        return max(0.0, min(100.0, base_confidence))
+    game_key = f"{canonical_team_key(away_team)}|{canonical_team_key(home_team)}"
+    game = score_map.get(game_key, {})
+    if not game:
+        return max(0.0, min(100.0, base_confidence))
+
+    if game.get("can_grade"):
+        graded = grade_pick_from_score_map(matchup, pick, {game_key: game})
+        if graded == "win":
+            return 100.0
+        if graded == "loss":
+            return 0.0
+        if graded == "push":
+            return 50.0
+
+    pick_team = pick.replace("F5 ", "").strip().lower()
+    away_f5 = int(game.get("away_f5", 0) or 0)
+    home_f5 = int(game.get("home_f5", 0) or 0)
+    if pick_team == away_team.lower():
+        run_diff = away_f5 - home_f5
+    elif pick_team == home_team.lower():
+        run_diff = home_f5 - away_f5
+    else:
+        run_diff = 0
+
+    inning = to_int(game.get("current_inning")) or 1
+    inning_state = str(game.get("inning_state", "")).lower()
+    if inning_state in {"end", "bottom"}:
+        progress = min(1.0, (inning + 0.5) / 5.0)
+    else:
+        progress = min(1.0, inning / 5.0)
+
+    # Blend confidence with game-state edge. Run differential matters more as
+    # innings progress toward F5 completion.
+    state_bonus = (run_diff * 11.0) * (0.35 + 0.65 * progress)
+    blended = (base_confidence * (1.0 - 0.35 * progress)) + (base_confidence + state_bonus) * (0.35 * progress)
+    return max(0.0, min(100.0, blended))
+
+
 def render_best_bets_hero(row: Optional[pd.Series], score_map: Dict[str, Dict[str, Any]]) -> None:
     """Render the single top pick as a confident hero card."""
     if row is None or (hasattr(row, "empty") and row.empty):
@@ -5363,7 +5416,9 @@ def render_best_bets_hero(row: Optional[pd.Series], score_map: Dict[str, Dict[st
 
     tier = str(row.get("Tier", "CORE"))
     matchup = esc(row.get("Matchup", ""))
+    matchup_raw = str(row.get("Matchup", ""))
     pick = esc(row.get("Suggested F5 Pick", "No Play"))
+    pick_raw = str(row.get("Suggested F5 Pick", "No Play"))
     models = int(row.get("Models On Bet", 0) or 0)
     conf = float(row.get("Avg Confidence", 0.0) or 0.0)
     sample = float(row.get("Avg Sample", 0.0) or 0.0)
@@ -5384,6 +5439,54 @@ def render_best_bets_hero(row: Optional[pd.Series], score_map: Dict[str, Dict[st
             f'<div class="sa-hero-stat-val">{int(float(odds)):+d}</div></div>'
         )
 
+    pl = _score_payload_for_card(matchup_raw, score_map)
+    lock_status = "OPEN"
+    f5_line = "F5 score pending"
+    inning_line = "Not started"
+    if pl:
+        away_lab = short_team_label(str(pl.get("away", "")))
+        home_lab = short_team_label(str(pl.get("home", "")))
+        away_s = "—" if pl.get("away_s") is None else str(pl.get("away_s"))
+        home_s = "—" if pl.get("home_s") is None else str(pl.get("home_s"))
+        f5_line = f"{away_lab} {away_s} - {home_lab} {home_s}"
+        inning_line = str(pl.get("phase_label", "Not started"))
+        phase = str(pl.get("phase", "")).lower()
+        if phase == "final":
+            graded = grade_pick_from_score_map(matchup_raw, pick_raw, score_map)
+            if graded == "win":
+                lock_status = "WIN"
+            elif graded == "loss":
+                lock_status = "LOSS"
+            elif graded == "push":
+                lock_status = "PUSH"
+            else:
+                lock_status = "OPEN"
+        elif phase == "pre":
+            lock_status = "OPEN"
+        else:
+            lock_status = "OPEN"
+
+    hit_prob = _lock_hit_probability(matchup_raw, pick_raw, score_map, conf)
+    status_color = {
+        "WIN": "#10b981",
+        "LOSS": "#ef4444",
+        "PUSH": "#f59e0b",
+        "OPEN": "#f59e0b",
+    }.get(lock_status, "#f59e0b")
+    status_html = (
+        '<div style="margin-top:12px;padding:10px 12px;border-radius:12px;'
+        'border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.32);">'
+        f'<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;">'
+        f'<span style="font-size:.78rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;">Bet Status</span>'
+        f'<span style="font-weight:800;color:{status_color};">{esc(lock_status)}</span>'
+        f'</div>'
+        f'<div style="margin-top:6px;font-weight:700;color:#e2e8f0;">{esc(f5_line)}</div>'
+        f'<div style="margin-top:2px;font-size:.82rem;color:#94a3b8;">Inning/Phase: {esc(inning_line)}</div>'
+        f'<div style="margin-top:6px;font-size:.82rem;color:#cbd5e1;">Live hit probability: '
+        f'<b style="color:#e2e8f0;">{hit_prob:.1f}%</b></div>'
+        '</div>'
+    )
+
     hero_html = (
         '<div class="sa-hero">'
         '<div class="sa-hero-head">'
@@ -5398,6 +5501,7 @@ def render_best_bets_hero(row: Optional[pd.Series], score_map: Dict[str, Dict[st
         f'<div class="sa-hero-stat"><div class="sa-hero-stat-lab">Sample</div><div class="sa-hero-stat-val">{sample:.2f}</div></div>'
         f'{ev_html}{odds_html}'
         '</div>'
+        f'{status_html}'
         '</div>'
     )
     st.markdown(hero_html, unsafe_allow_html=True)
