@@ -14,6 +14,17 @@ import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 
+# Gamecast UI — drop-in renderers (LIVE pill, linescore, hit prob, bet slip, …)
+from gamecast_ui import (
+    render_gamecast_theme,
+    render_gamecast_hero,
+    render_gamecast_card,
+    render_gamecast_mini_list,
+    render_gamecast_empty,
+    fetch_innings_for_date,
+    build_matchup_intel,
+)
+
 MLB_URL = "https://www.mlb.com/probable-pitchers/"
 MLB_STATS_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule"
 MLB_PLAYER_STATS_URL = "https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
@@ -3527,17 +3538,37 @@ def render_premium_theme() -> None:
 
         .sa-hero {
             position: relative;
-            background: linear-gradient(135deg, rgba(139, 92, 246, 0.18) 0%, rgba(16, 185, 129, 0.10) 50%, rgba(17, 24, 39, 0.90) 100%);
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.16) 0%, rgba(16, 185, 129, 0.10) 48%, rgba(17, 24, 39, 0.92) 100%);
             border: 1px solid var(--card-border-strong);
             border-radius: 18px;
-            padding: 22px 26px;
+            padding: 18px 20px;
             overflow: hidden;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
         .sa-hero::before {
             content: ""; position: absolute; inset: 0;
             background: radial-gradient(600px 200px at 0% 0%, rgba(139, 92, 246, 0.22), transparent 70%);
             pointer-events: none;
+        }
+        .sa-hero-grid {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            grid-template-columns: 1.3fr 1fr;
+            gap: 14px;
+            align-items: stretch;
+        }
+        @media (max-width: 980px) {
+            .sa-hero-grid { grid-template-columns: 1fr; }
+        }
+        .sa-hero-main { min-width: 0; }
+        .sa-hero-kicker {
+            color: var(--text-3);
+            font-size: 0.68rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            font-weight: 800;
+            margin-bottom: 6px;
         }
         .sa-hero-head {
             display: flex; align-items: center; justify-content: space-between;
@@ -3559,11 +3590,19 @@ def render_premium_theme() -> None:
         }
         .sa-hero-pick b { color: var(--accent-emerald); }
         .sa-hero-stats {
-            display: flex; gap: 22px; margin-top: 16px;
+            display: grid;
+            grid-template-columns: repeat(5, minmax(80px, 1fr));
+            gap: 10px;
+            margin-top: 14px;
             position: relative;
         }
         .sa-hero-stat {
-            display: flex; flex-direction: column;
+            display: flex;
+            flex-direction: column;
+            background: rgba(10, 14, 26, 0.42);
+            border: 1px solid rgba(148, 163, 184, 0.20);
+            border-radius: 10px;
+            padding: 8px 10px;
         }
         .sa-hero-stat-lab {
             font-size: 0.65rem; color: var(--text-3);
@@ -3571,7 +3610,149 @@ def render_premium_theme() -> None:
         }
         .sa-hero-stat-val {
             font-family: ui-monospace, "SF Mono", Menlo, monospace;
-            font-size: 1.55rem; font-weight: 800; color: var(--text-0);
+            font-size: 1.15rem; font-weight: 800; color: var(--text-0);
+        }
+        .sa-hero-livepanel {
+            position: relative;
+            z-index: 1;
+            border: 1px solid rgba(148, 163, 184, 0.30);
+            border-radius: 14px;
+            background: rgba(7, 12, 23, 0.62);
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .sa-live-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+        .sa-live-title {
+            font-size: 0.68rem;
+            color: var(--text-3);
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            font-weight: 800;
+        }
+        .sa-live-state {
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid transparent;
+            font-size: 0.72rem;
+            font-weight: 900;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        .sa-live-state.open { background: rgba(245,158,11,.16); color: #fde68a; border-color: rgba(245,158,11,.38); }
+        .sa-live-state.win { background: rgba(16,185,129,.16); color: #bbf7d0; border-color: rgba(16,185,129,.38); }
+        .sa-live-state.loss { background: rgba(244,63,94,.14); color: #fecdd3; border-color: rgba(244,63,94,.38); }
+        .sa-live-state.push { background: rgba(148,163,184,.14); color: #e2e8f0; border-color: rgba(148,163,184,.38); }
+        .sa-live-scoreline {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 2.15rem;
+            font-weight: 900;
+            color: var(--text-0);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.02em;
+            text-align: center;
+            line-height: 1.05;
+        }
+        .sa-live-phase {
+            font-size: 0.86rem;
+            color: var(--text-2);
+            text-align: center;
+        }
+        .sa-live-linescore {
+            display: grid;
+            gap: 6px;
+        }
+        .sa-live-line {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+        .sa-live-line-team {
+            font-size: 0.82rem;
+            color: var(--text-1);
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        .sa-live-line-score {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 1rem;
+            color: var(--text-0);
+            font-weight: 900;
+            min-width: 18px;
+            text-align: right;
+        }
+        .sa-live-note {
+            font-size: 0.8rem;
+            color: var(--text-3);
+            text-align: center;
+        }
+        .sa-live-main {
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            border-radius: 12px;
+            background: rgba(2, 6, 23, 0.58);
+            padding: 12px 10px;
+        }
+        .sa-live-f5-tag {
+            text-align: center;
+            font-size: 0.68rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--text-3);
+            font-weight: 800;
+            margin-bottom: 4px;
+        }
+        .sa-live-prob-wrap {
+            border-top: 1px solid rgba(148, 163, 184, 0.22);
+            padding-top: 8px;
+            margin-top: 2px;
+        }
+        .sa-live-prob-label {
+            font-size: 0.66rem;
+            color: var(--text-3);
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            font-weight: 800;
+            margin-bottom: 4px;
+        }
+        .sa-live-prob-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+        .sa-live-prob-val {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 1rem;
+            font-weight: 900;
+            color: var(--text-0);
+        }
+        .sa-live-prob-track {
+            width: 100%;
+            height: 8px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: rgba(148, 163, 184, 0.22);
+        }
+        .sa-live-prob-fill {
+            height: 100%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #22c55e 0%, #10b981 60%, #14b8a6 100%);
+        }
+        .sa-live-judged {
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.10em;
+            color: var(--text-3);
+            font-weight: 800;
+            margin-top: 2px;
         }
 
         .sa-bb-card {
@@ -5439,19 +5620,35 @@ def render_best_bets_hero(row: Optional[pd.Series], score_map: Dict[str, Dict[st
             f'<div class="sa-hero-stat-val">{int(float(odds)):+d}</div></div>'
         )
 
+    away_team = matchup_raw.split(" @ ")[0].strip() if " @ " in matchup_raw else ""
+    home_team = matchup_raw.split(" @ ")[1].strip() if " @ " in matchup_raw else ""
+    game_key = f"{canonical_team_key(away_team)}|{canonical_team_key(home_team)}" if away_team and home_team else ""
+    game = score_map.get(game_key, {}) if game_key else {}
     pl = _score_payload_for_card(matchup_raw, score_map)
     lock_status = "OPEN"
     f5_line = "F5 score pending"
     inning_line = "Not started"
+    show_live_prob = False
+    show_f5_judged = False
+    prob_line = ""
+    judged_line = '<div class="sa-live-judged">F5 outcome locked in</div>'
+    away_lab = short_team_label(away_team) if away_team else "AWY"
+    home_lab = short_team_label(home_team) if home_team else "HME"
+    away_s = "—"
+    home_s = "—"
+    away_total_s = "—"
+    home_total_s = "—"
     if pl:
-        away_lab = short_team_label(str(pl.get("away", "")))
-        home_lab = short_team_label(str(pl.get("home", "")))
+        away_lab = short_team_label(str(pl.get("away", away_team)))
+        home_lab = short_team_label(str(pl.get("home", home_team)))
         away_s = "—" if pl.get("away_s") is None else str(pl.get("away_s"))
         home_s = "—" if pl.get("home_s") is None else str(pl.get("home_s"))
         f5_line = f"{away_lab} {away_s} - {home_lab} {home_s}"
         inning_line = str(pl.get("phase_label", "Not started"))
         phase = str(pl.get("phase", "")).lower()
-        if phase == "final":
+        away_total_s = "—" if pl.get("full_away") is None else str(pl.get("full_away"))
+        home_total_s = "—" if pl.get("full_home") is None else str(pl.get("full_home"))
+        if game.get("can_grade"):
             graded = grade_pick_from_score_map(matchup_raw, pick_raw, score_map)
             if graded == "win":
                 lock_status = "WIN"
@@ -5461,12 +5658,24 @@ def render_best_bets_hero(row: Optional[pd.Series], score_map: Dict[str, Dict[st
                 lock_status = "PUSH"
             else:
                 lock_status = "OPEN"
+            inning_line = f"{inning_line} · F5 graded"
+            show_f5_judged = True
         elif phase == "pre":
             lock_status = "OPEN"
         else:
             lock_status = "OPEN"
+            show_live_prob = True
 
-    hit_prob = _lock_hit_probability(matchup_raw, pick_raw, score_map, conf)
+    if show_live_prob:
+        hit_prob = _lock_hit_probability(matchup_raw, pick_raw, score_map, conf)
+        prob_line = (
+            '<div class="sa-live-prob-wrap">'
+            '<div class="sa-live-prob-label">Live Hit Probability</div>'
+            f'<div class="sa-live-prob-row"><span class="sa-live-prob-val">{hit_prob:.1f}%</span></div>'
+            f'<div class="sa-live-prob-track"><div class="sa-live-prob-fill" style="width:{max(0.0, min(100.0, hit_prob)):.1f}%;"></div></div>'
+            '</div>'
+        )
+    status_class = lock_status.lower()
     status_color = {
         "WIN": "#10b981",
         "LOSS": "#ef4444",
@@ -5474,21 +5683,27 @@ def render_best_bets_hero(row: Optional[pd.Series], score_map: Dict[str, Dict[st
         "OPEN": "#f59e0b",
     }.get(lock_status, "#f59e0b")
     status_html = (
-        '<div style="margin-top:12px;padding:10px 12px;border-radius:12px;'
-        'border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.32);">'
-        f'<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;">'
-        f'<span style="font-size:.78rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;">Bet Status</span>'
-        f'<span style="font-weight:800;color:{status_color};">{esc(lock_status)}</span>'
-        f'</div>'
-        f'<div style="margin-top:6px;font-weight:700;color:#e2e8f0;">{esc(f5_line)}</div>'
-        f'<div style="margin-top:2px;font-size:.82rem;color:#94a3b8;">Inning/Phase: {esc(inning_line)}</div>'
-        f'<div style="margin-top:6px;font-size:.82rem;color:#cbd5e1;">Live hit probability: '
-        f'<b style="color:#e2e8f0;">{hit_prob:.1f}%</b></div>'
+        '<div class="sa-hero-livepanel">'
+        '<div class="sa-live-top">'
+        '<div class="sa-live-title">Live Bet Tracker</div>'
+        f'<span class="sa-live-state {esc(status_class)}" style="color:{status_color};">{esc(lock_status)}</span>'
+        '</div>'
+        '<div class="sa-live-main">'
+        '<div class="sa-live-f5-tag">F5 Gamecast</div>'
+        f'<div class="sa-live-scoreline">{esc(away_s)} - {esc(home_s)}</div>'
+        f'<div class="sa-live-phase">{esc(away_lab)} vs {esc(home_lab)} · {esc(inning_line)}</div>'
+        f'<div class="sa-live-note">Full game: {esc(away_lab)} {esc(away_total_s)} - {esc(home_lab)} {esc(home_total_s)}</div>'
+        '</div>'
+        f'{prob_line if show_live_prob else ""}'
+        f'{judged_line if show_f5_judged else ""}'
         '</div>'
     )
 
     hero_html = (
         '<div class="sa-hero">'
+        '<div class="sa-hero-grid">'
+        '<div class="sa-hero-main">'
+        '<div class="sa-hero-kicker">Top Daily Position</div>'
         '<div class="sa-hero-head">'
         f'<div class="sa-hero-eyebrow">{esc(tier)} · Lock of the Day</div>'
         '<span class="sa-pill">#1 priority</span>'
@@ -5501,7 +5716,9 @@ def render_best_bets_hero(row: Optional[pd.Series], score_map: Dict[str, Dict[st
         f'<div class="sa-hero-stat"><div class="sa-hero-stat-lab">Sample</div><div class="sa-hero-stat-val">{sample:.2f}</div></div>'
         f'{ev_html}{odds_html}'
         '</div>'
+        '</div>'
         f'{status_html}'
+        '</div>'
         '</div>'
     )
     st.markdown(hero_html, unsafe_allow_html=True)
@@ -5648,6 +5865,7 @@ def main() -> None:
 
     render_app_theme()
     render_premium_theme()
+    render_gamecast_theme()
     st.markdown(
         '<div class="main-title sa-app-title">STACKED ANALYTICS · F5</div>',
         unsafe_allow_html=True,
@@ -5859,6 +6077,16 @@ def main() -> None:
         today_score_map = fetch_scores_for_date(app_today())
     except Exception:
         today_score_map = {}
+    # Inning-by-inning data for the gamecast linescores (separate cache).
+    try:
+        today_innings_map = fetch_innings_for_date(app_today().isoformat())
+    except Exception:
+        today_innings_map = {}
+    # Optional intel (pitcher names, ERA / K / WHIP edges) for Key Reasons.
+    try:
+        today_matchup_intel = build_matchup_intel(system_tables)
+    except Exception:
+        today_matchup_intel = {}
     confidence_100_show = annotate_for_command_center(confidence_100_bets_df, today_score_map, tracker_df)
     system_names = [s.name for s in SYSTEMS]
     system_name_to_key = {s.name: s.key for s in SYSTEMS}
@@ -5979,7 +6207,17 @@ def main() -> None:
                 "A true 100% lock cleared all thresholds. Priority this play first.",
                 tag="RARE",
             )
-            render_best_bet_cards_v2(crown_play_df, today_score_map, tracker_df, start_rank=1)
+            render_gamecast_card(
+                crown_play_df.iloc[0],
+                today_score_map,
+                tracker_df,
+                innings_map=today_innings_map,
+                matchup_intel=today_matchup_intel,
+                label="Crown Play",
+                eyebrow="Special Signal · 100% Lock",
+                badge="CROWN",
+                rank=1,
+            )
 
         # Hero: top pick of the day
         render_premium_section(
@@ -5988,7 +6226,22 @@ def main() -> None:
             "Highest-tier qualified play across every model. Same card style as the list below.",
             tag=f"{len(all_best_bets_df)} best bets",
         )
-        render_best_bets_hero(all_best_bets_top_row, today_score_map)
+        if all_best_bets_top_row is not None:
+            render_gamecast_hero(
+                all_best_bets_top_row,
+                today_score_map,
+                tracker_df,
+                innings_map=today_innings_map,
+                matchup_intel=today_matchup_intel,
+                label="Lock of the Day",
+                eyebrow="Sharp Pick · Lock of the Day",
+                badge="#1 Priority",
+            )
+        else:
+            render_gamecast_empty(
+                "No Lock of the Day yet",
+                "Models are still evaluating today's slate.",
+            )
 
         # KPI strip — clean, just 4 metrics
         k1, k2, k3, k4 = st.columns(4)
@@ -6014,25 +6267,41 @@ def main() -> None:
             tag=f"{len(all_best_bets_df)} qualified",
         )
         if all_best_bets_df.empty:
-            st.markdown(
-                '<div class="panel" style="text-align:center;color:#64748b;padding:32px;">'
-                "No qualified best bets yet. Models are still evaluating today's slate."
-                "</div>",
-                unsafe_allow_html=True,
+            render_gamecast_empty(
+                "No qualified best bets yet",
+                "Models are still evaluating today's slate.",
             )
         else:
-            # Skip row 0 (already shown as Lock of the Day hero), show next 4 as headline cards.
+            # Skip row 0 (already shown as Lock of the Day hero), show next 4 as full gamecast cards.
             tail = all_best_bets_df.iloc[1:].reset_index(drop=True)
             headline = tail.head(4)
             rest = tail.iloc[4:].reset_index(drop=True)
             if not headline.empty:
-                render_best_bet_cards_v2(headline, today_score_map, tracker_df, start_rank=2)
+                for offset, (_, row) in enumerate(headline.iterrows()):
+                    rank_idx = 2 + offset
+                    render_gamecast_card(
+                        row,
+                        today_score_map,
+                        tracker_df,
+                        innings_map=today_innings_map,
+                        matchup_intel=today_matchup_intel,
+                        label=f"Top Pick #{rank_idx}",
+                        eyebrow=f"Priority #{rank_idx}",
+                        badge=f"#{rank_idx}",
+                        rank=rank_idx,
+                    )
             else:
                 st.caption("Only one qualified play today — see the Lock of the Day above.")
             if not rest.empty:
                 with st.expander(f"See all {len(all_best_bets_df)} best bets", expanded=False):
-                    render_best_bet_cards_v2(
-                        rest, today_score_map, tracker_df, start_rank=2 + len(headline)
+                    render_gamecast_mini_list(
+                        rest,
+                        today_score_map,
+                        tracker_df,
+                        innings_map=today_innings_map,
+                        matchup_intel=today_matchup_intel,
+                        start_rank=2 + len(headline),
+                        section_subtitle="Every other qualified F5 edge for today.",
                     )
 
         # Featured: top model of the season (auto-selected by season WR).
@@ -6057,7 +6326,17 @@ def main() -> None:
         if featured_show.empty:
             st.caption("No qualified rows for this board today.")
         else:
-            render_featured_pick_cards_html(featured_show, today_score_map, featured_system_label)
+            for _, _featured_row in featured_show.iterrows():
+                render_gamecast_card(
+                    _featured_row,
+                    today_score_map,
+                    tracker_df,
+                    innings_map=today_innings_map,
+                    matchup_intel=today_matchup_intel,
+                    label="Featured Pick",
+                    eyebrow=f"Season Leader · {featured_system_label}",
+                    badge="FEATURED",
+                )
 
         # Best of week / month — side-by-side
         render_premium_section(
@@ -6078,7 +6357,17 @@ def main() -> None:
                     f"{float(wk['Win Rate %']):.1f}% WR · {int(wk['Graded'])} graded",
                 )
                 if not week_model_show.empty:
-                    render_featured_pick_cards_html(week_model_show, today_score_map, str(wk["System"]))
+                    for _, _wk_row in week_model_show.iterrows():
+                        render_gamecast_card(
+                            _wk_row,
+                            today_score_map,
+                            tracker_df,
+                            innings_map=today_innings_map,
+                            matchup_intel=today_matchup_intel,
+                            label="Hot This Week",
+                            eyebrow=f"Best of Week · {wk['System']}",
+                            badge="HOT 7D",
+                        )
                 else:
                     st.caption("No qualified plays today for this model.")
         with bm:
@@ -6093,7 +6382,17 @@ def main() -> None:
                     f"{float(mo['Win Rate %']):.1f}% WR · {int(mo['Graded'])} graded",
                 )
                 if not month_model_show.empty:
-                    render_featured_pick_cards_html(month_model_show, today_score_map, str(mo["System"]))
+                    for _, _mo_row in month_model_show.iterrows():
+                        render_gamecast_card(
+                            _mo_row,
+                            today_score_map,
+                            tracker_df,
+                            innings_map=today_innings_map,
+                            matchup_intel=today_matchup_intel,
+                            label="Hot This Month",
+                            eyebrow=f"Best of Month · {mo['System']}",
+                            badge="HOT 30D",
+                        )
                 else:
                     st.caption("No qualified plays today for this model.")
 
