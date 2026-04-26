@@ -22,6 +22,7 @@ CARD_TRACKER_FILE = "f5_card_tracker.csv"
 LOCK_TRACKER_FILE = "f5_lock_tracker.csv"
 BACKTEST_CACHE_FILE = "f5_backtest_cache.json"
 MATCHUPS_CACHE_FILE = "f5_matchups_cache.json"
+TODAY_BEST_BETS_CACHE_FILE = "f5_today_best_bets_cache.json"
 ADMIN_BACKTEST_KEY = "thatsbaseball"
 # Pinned board on Command Center (must match a `SYSTEMS[].name`).
 FEATURED_SYSTEM_NAME = "Tempo Control"
@@ -476,6 +477,10 @@ def matchups_cache_file_path() -> str:
     return os.path.join(os.path.dirname(__file__), MATCHUPS_CACHE_FILE)
 
 
+def today_best_bets_cache_file_path() -> str:
+    return os.path.join(os.path.dirname(__file__), TODAY_BEST_BETS_CACHE_FILE)
+
+
 def save_matchups_cache(matchups: List[Matchup], parse_mode: str) -> None:
     payload = {
         "saved_at": app_now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -513,6 +518,37 @@ def matchups_cache_is_stale(saved_at: Optional[str]) -> bool:
     if saved.date() != app_today():
         return True
     return (app_now().replace(tzinfo=None) - saved).total_seconds() > 3 * 3600
+
+
+def load_today_best_bets_cache() -> pd.DataFrame:
+    path = today_best_bets_cache_file_path()
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if str(payload.get("bet_date", "")) != app_today().strftime("%Y-%m-%d"):
+            return pd.DataFrame()
+        rows = payload.get("rows", [])
+        if not isinstance(rows, list) or not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+def save_today_best_bets_cache(df: pd.DataFrame) -> None:
+    path = today_best_bets_cache_file_path()
+    if df is None or df.empty:
+        return
+    rows = json.loads(df.to_json(orient="records"))
+    payload = {
+        "bet_date": app_today().strftime("%Y-%m-%d"),
+        "saved_at": app_now().strftime("%Y-%m-%d %H:%M:%S"),
+        "rows": rows,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
 
 
 def better_side(matchup: Matchup) -> Optional[str]:
@@ -5732,13 +5768,20 @@ def main() -> None:
     full_tracker_summary = summary_from_tracker(dedupe_tracker_tickets(tracker_df))
 
     # Unified, tier-tagged best-bets list — what powers the Today tab.
-    all_best_bets_df = build_all_best_bets(
+    live_all_best_bets_df = build_all_best_bets(
         consensus_df=consensus_df,
         sharp_consensus_card=sharp_consensus_card,
         priority_bets_df=priority_bets_df,
         backtest_only_bets_df=backtest_only_bets_df,
         confidence_100_bets_df=confidence_100_bets_df,
     )
+    frozen_today_best_bets = load_today_best_bets_cache()
+    if frozen_today_best_bets.empty:
+        all_best_bets_df = live_all_best_bets_df
+        if not all_best_bets_df.empty:
+            save_today_best_bets_cache(all_best_bets_df)
+    else:
+        all_best_bets_df = frozen_today_best_bets
     all_best_bets_top_row: Optional[pd.Series] = (
         all_best_bets_df.iloc[0] if not all_best_bets_df.empty else None
     )
@@ -5768,6 +5811,20 @@ def main() -> None:
 
     # ---------------------- TAB 0: TODAY ----------------------
     with tabs[0]:
+        crown_play_df = pd.DataFrame()
+        if not all_best_bets_df.empty and "Tier" in all_best_bets_df.columns:
+            crown_play_df = all_best_bets_df[all_best_bets_df["Tier"].astype(str) == "100% LOCK"].head(1).copy()
+
+        # Rare front-page spotlight: only show when a true 100% lock exists.
+        if not crown_play_df.empty:
+            render_premium_section(
+                "SPECIAL SIGNAL",
+                "Crown Play Available Today",
+                "A true 100% lock cleared all thresholds. Priority this play first.",
+                tag="RARE",
+            )
+            render_best_bet_cards_v2(crown_play_df, today_score_map, tracker_df, start_rank=1)
+
         # Hero: top pick of the day
         render_premium_section(
             "LIVE",
