@@ -4392,15 +4392,19 @@ def render_scoreboard_strip_from_slip(
             elif pl.get("away_s") is not None and pl.get("home_s") is not None:
                 a_s = pl["away_s"]
                 h_s = pl["home_s"]
+                a_win = a_s > h_s
+                h_win = h_s > a_s
+                a_col = "color:#4ade80;font-weight:900;" if a_win else ("color:#f87171;" if h_win else "")
+                h_col = "color:#4ade80;font-weight:900;" if h_win else ("color:#f87171;" if a_win else "")
                 mshort = html.escape(f"{short_team_label(pl['away'])} @ {short_team_label(pl['home'])}")
                 fg_one = html.escape(full_game_strip_caption(pl))
                 inner = (
                     f'<div class="sa-mini-board sa-score-ui {tone}">'
                     f'<div class="sa-mini-ticker-title">{mshort}</div>'
                     f'<div class="sa-mini-pair-row">'
-                    f'<div class="sa-mini-side"><span class="sa-mini-over">{away_nm}</span><span class="n">{a_s}</span></div>'
+                    f'<div class="sa-mini-side"><span class="sa-mini-over">{away_nm}</span><span class="n" style="{a_col}">{a_s}</span></div>'
                     f'<span class="dash">—</span>'
-                    f'<div class="sa-mini-side"><span class="sa-mini-over">{home_nm}</span><span class="n">{h_s}</span></div>'
+                    f'<div class="sa-mini-side"><span class="sa-mini-over">{home_nm}</span><span class="n" style="{h_col}">{h_s}</span></div>'
                     f"</div>"
                     f'<div class="sa-mini-fg-inline">{fg_one}</div>'
                     f"</div>"
@@ -4453,6 +4457,10 @@ def render_betslip_cards_html(df: pd.DataFrame, score_map: Dict[str, Dict[str, A
         if pl and pl.get("away_s") is not None and pl.get("home_s") is not None:
             a_s = pl["away_s"]
             h_s = pl["home_s"]
+            a_win = a_s > h_s
+            h_win = h_s > a_s
+            a_col = "color:#4ade80;font-weight:900;" if a_win else ("color:#f87171;" if h_win else "")
+            h_col = "color:#4ade80;font-weight:900;" if h_win else ("color:#f87171;" if a_win else "")
             fg_min = render_full_game_minimal_html(pl)
             away_lab = esc_html_one_line(short_team_label(pl["away"]))
             home_lab = esc_html_one_line(short_team_label(pl["home"]))
@@ -4461,10 +4469,10 @@ def render_betslip_cards_html(df: pd.DataFrame, score_map: Dict[str, Dict[str, A
                 f'<div class="sa-slip-scorehdr-min">F5 · innings 1–5</div>'
                 f'<div class="sa-slip-pair-row">'
                 f'<div class="sa-slip-side"><span class="sa-slip-over">{away_lab}</span>'
-                f'<span class="big">{a_s}</span></div>'
+                f'<span class="big" style="{a_col}">{a_s}</span></div>'
                 f'<span class="sep">—</span>'
                 f'<div class="sa-slip-side"><span class="sa-slip-over">{home_lab}</span>'
-                f'<span class="big">{h_s}</span></div>'
+                f'<span class="big" style="{h_col}">{h_s}</span></div>'
                 f"</div>"
                 f"{fg_min}"
                 f'<div class="sa-slip-matchup-micro">{matchup}</div></div>'
@@ -4525,6 +4533,10 @@ def render_featured_pick_cards_html(
         if pl and pl.get("away_s") is not None and pl.get("home_s") is not None:
             a_s = pl["away_s"]
             h_s = pl["home_s"]
+            a_win = a_s > h_s
+            h_win = h_s > a_s
+            a_col = "color:#4ade80;font-weight:900;" if a_win else ("color:#f87171;" if h_win else "")
+            h_col = "color:#4ade80;font-weight:900;" if h_win else ("color:#f87171;" if a_win else "")
             fg_min = render_full_game_minimal_html(pl)
             away_lab = esc_html_one_line(short_team_label(pl["away"]))
             home_lab = esc_html_one_line(short_team_label(pl["home"]))
@@ -4533,10 +4545,10 @@ def render_featured_pick_cards_html(
                 f'<div class="sa-slip-scorehdr-min">F5 · innings 1–5</div>'
                 f'<div class="sa-slip-pair-row">'
                 f'<div class="sa-slip-side"><span class="sa-slip-over">{away_lab}</span>'
-                f'<span class="big">{a_s}</span></div>'
+                f'<span class="big" style="{a_col}">{a_s}</span></div>'
                 f'<span class="sep">—</span>'
                 f'<div class="sa-slip-side"><span class="sa-slip-over">{home_lab}</span>'
-                f'<span class="big">{h_s}</span></div>'
+                f'<span class="big" style="{h_col}">{h_s}</span></div>'
                 f"</div>"
                 f"{fg_min}"
                 f'<div class="sa-slip-matchup-micro">{matchup}</div></div>'

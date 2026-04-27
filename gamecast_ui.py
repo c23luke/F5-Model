@@ -1366,13 +1366,23 @@ def _render_linescore_html(
         letters = re.sub(r"[^A-Z]", "", str(label).upper())
         return letters[:2] if len(letters) >= 2 else (letters or "T")
 
+    def _score_style(away_runs: Any, home_runs: Any) -> Tuple[str, str]:
+        a_val = _to_int(away_runs)
+        h_val = _to_int(home_runs)
+        if a_val is None or h_val is None or a_val == h_val:
+            return "", ""
+        if a_val > h_val:
+            return "color:#4ade80;font-weight:900;", "color:#f87171;"
+        return "color:#f87171;", "color:#4ade80;font-weight:900;"
+
     def _scoreboard_top(away_runs: Any, home_runs: Any, phase: str) -> str:
+        away_style, home_style = _score_style(away_runs, home_runs)
         return (
             '<div class="gc-scoreboard-top">'
             '<div class="gc-score-team">'
             f'<div class="gc-score-logo">{_esc(_team_mark(away_lab))}</div>'
             f'<div class="gc-score-team-name">{_esc(away_lab)}</div>'
-            f'<div class="gc-score-num">{_esc(away_runs)}</div>'
+            f'<div class="gc-score-num" style="{away_style}">{_esc(away_runs)}</div>'
             '</div>'
             '<div class="gc-score-center">'
             f'<div class="gc-score-phase">{_esc(phase)}</div>'
@@ -1382,7 +1392,7 @@ def _render_linescore_html(
             '<div class="gc-score-team">'
             f'<div class="gc-score-logo">{_esc(_team_mark(home_lab))}</div>'
             f'<div class="gc-score-team-name">{_esc(home_lab)}</div>'
-            f'<div class="gc-score-num">{_esc(home_runs)}</div>'
+            f'<div class="gc-score-num" style="{home_style}">{_esc(home_runs)}</div>'
             '</div>'
             '</div>'
         )
