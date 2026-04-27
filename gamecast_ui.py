@@ -607,6 +607,8 @@ _GAMECAST_CSS = """
 .gc-matchup {
     font-size: 1.85rem; font-weight: 800; color: var(--gc-text-0);
     letter-spacing: -0.018em; line-height: 1.15;
+    overflow-wrap: normal;
+    word-break: normal;
 }
 .gc-matchup-card { font-size: 1.45rem; }
 .gc-matchup-mobile { display: none; }
@@ -620,7 +622,7 @@ _GAMECAST_CSS = """
     display: flex; align-items: flex-start; justify-content: space-between;
     gap: 18px; margin: 4px 0 14px 0;
 }
-.gc-topbar-meta { flex: 1; min-width: 0; }
+.gc-topbar-meta { flex: 1 1 auto; min-width: min(280px, 100%); }
 .gc-metrics {
     display: flex; gap: 0; align-items: stretch;
     border-left: 1px solid var(--gc-border);
