@@ -108,6 +108,14 @@ def _short_team_label(full_name: str) -> str:
     return (nick if len(nick) <= 8 else nick[:8]).upper()
 
 
+def _compact_matchup_label(matchup: str) -> str:
+    """Phone-safe matchup label that cannot collapse into a vertical word stack."""
+    if " @ " not in str(matchup):
+        return " ".join(str(matchup).split())
+    away, home = [s.strip() for s in str(matchup).split(" @ ", 1)]
+    return f"{_short_team_label(away)} @ {_short_team_label(home)}"
+
+
 def _ordinal(n: int) -> str:
     if 11 <= (n % 100) <= 13:
         suf = "th"
@@ -601,6 +609,7 @@ _GAMECAST_CSS = """
     letter-spacing: -0.018em; line-height: 1.15;
 }
 .gc-matchup-card { font-size: 1.45rem; }
+.gc-matchup-mobile { display: none; }
 .gc-pickline {
     color: var(--gc-text-1); font-size: 0.95rem; margin-top: 6px; margin-bottom: 4px;
 }
@@ -1086,7 +1095,7 @@ _GAMECAST_CSS = """
 }
 
 /* ============== Phone-first lock card polish ============== */
-@media (max-width: 640px) {
+@media (max-width: 980px) {
     .gc-card {
         border-radius: 16px;
         padding: 14px 12px;
@@ -1174,6 +1183,15 @@ _GAMECAST_CSS = """
     .gc-matchup-card {
         font-size: 1.02rem;
         line-height: 1.2;
+        overflow-wrap: normal;
+        word-break: normal;
+    }
+    .gc-matchup-desktop { display: none; }
+    .gc-matchup-mobile {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     .gc-pickline {
         font-size: 0.82rem;
@@ -1743,7 +1761,8 @@ def render_gamecast_hero(
         f'<div class="gc-eyebrow">{_esc(eyebrow)}</div>'
         f'<div class="gc-topbar">'
         f'<div class="gc-topbar-meta">'
-        f'<div class="gc-matchup">{_esc(matchup)}</div>'
+        f'<div class="gc-matchup gc-matchup-desktop">{_esc(matchup)}</div>'
+        f'<div class="gc-matchup gc-matchup-mobile">{_esc(_compact_matchup_label(matchup))}</div>'
         f'<div class="gc-pickline">Pick: <b>{_esc(pick)}</b></div>'
         f'</div>'
         f'{metrics_html}'
@@ -1827,7 +1846,8 @@ def render_gamecast_card(
         f'<div class="gc-eyebrow">{_esc(eyebrow)}</div>'
         f'<div class="gc-topbar">'
         f'<div class="gc-topbar-meta">'
-        f'<div class="gc-matchup gc-matchup-card">{_esc(matchup)}</div>'
+        f'<div class="gc-matchup gc-matchup-card gc-matchup-desktop">{_esc(matchup)}</div>'
+        f'<div class="gc-matchup gc-matchup-card gc-matchup-mobile">{_esc(_compact_matchup_label(matchup))}</div>'
         f'<div class="gc-pickline">Pick: <b>{_esc(pick)}</b></div>'
         f'</div>'
         f'{metrics_html}'
