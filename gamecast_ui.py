@@ -343,20 +343,8 @@ def _hit_probability(
 ) -> Tuple[float, str, str]:
     """
     Returns (probability_0_100, trend_label, trend_color_hex).
-
-    Live F5 win probability model:
-      - Pre-game / no data: fall back to base_confidence.
-      - F5 graded (5+ innings complete): 0 / 50 / 100 from the actual score.
-      - Live: P(pick wins F5) computed from a Poisson-Skellam model on the
-        runs each team is still expected to score in the F5 portion. The model
-        confidence still has a small influence (≤30% at first pitch, decaying
-        to 0 by the end of F5) to capture matchup edge that survives the early
-        innings. This stops the old behaviour where a team losing 5-4 in the
-        top of the 5th showed up as an 83% hit probability because the
-        pre-game model loved the matchup.
+    Blends model confidence with current F5 run differential and inning progress.
     """
-    import math
-
     if " @ " not in matchup:
         return max(0.0, min(100.0, base_confidence)), "Pre-game", "#94a3b8"
 
@@ -365,13 +353,11 @@ def _hit_probability(
     game = score_map.get(key) or {}
 
     pick_team = re.sub(r"\bF5\b", "", pick, flags=re.I).strip().lower()
-    pick_is_away = (pick_team == away.lower())
 
-    # F5 already graded — return ground truth.
     if game.get("can_grade"):
         af5 = int(game.get("away_f5", 0) or 0)
         hf5 = int(game.get("home_f5", 0) or 0)
-        if pick_is_away:
+        if pick_team == away.lower():
             won = af5 > hf5; pushed = af5 == hf5
         else:
             won = hf5 > af5; pushed = hf5 == af5
@@ -381,84 +367,28 @@ def _hit_probability(
             return 100.0, "Won", "#10b981"
         return 0.0, "Lost", "#f43f5e"
 
-    # No live data at all → pre-game model output.
     if not game:
         return max(0.0, min(100.0, base_confidence)), "Pre-game", "#94a3b8"
 
-    # ------------------------------------------------------------------ live
     af5 = int(game.get("away_f5", 0) or 0)
     hf5 = int(game.get("home_f5", 0) or 0)
-    pick_diff = (af5 - hf5) if pick_is_away else (hf5 - af5)
+    if pick_team == away.lower():
+        run_diff = af5 - hf5
+    elif pick_team == home.lower():
+        run_diff = hf5 - af5
+    else:
+        run_diff = 0
 
     inning = _to_int(game.get("current_inning")) or 1
-    state = str(game.get("inning_state", "")).lower()
-
-    # Half-innings remaining inside the F5 window (innings 1-5) for each side.
-    # "Top N"   → away batting bottom of N already counted? No: they're
-    #             batting NOW, bottom of N still owed. So away owes 0.5 (rest
-    #             of this top + future tops) and home owes 1.0 (full bot of
-    #             N + future bots).
-    # "Mid N" / "Bot N" → away top finished, home batting bottom in progress.
-    # "End N"   → both teams finished N.
-    if inning >= 6:
-        # Past F5 but not yet graded by `can_grade` (waiting on that flag).
-        # Just grade off current run diff.
-        if pick_diff > 0:
-            return 100.0, "Won", "#10b981"
-        if pick_diff == 0:
-            return 50.0, "Push", "#f59e0b"
-        return 0.0, "Lost", "#f43f5e"
-
-    full_after_this = max(0, 5 - inning)
-    if state == "top":
-        away_remaining = 0.5 + full_after_this
-        home_remaining = 1.0 + full_after_this
-    elif state in ("middle", "mid"):
-        away_remaining = 0.0 + full_after_this
-        home_remaining = 0.5 + full_after_this
-    elif state in ("bottom", "bot"):
-        away_remaining = 0.0 + full_after_this
-        home_remaining = 0.5 + full_after_this
-    elif state == "end":
-        away_remaining = float(full_after_this)
-        home_remaining = float(full_after_this)
+    inning_state = str(game.get("inning_state", "")).lower()
+    if inning_state in {"end", "bottom"}:
+        progress = min(1.0, (inning + 0.5) / 5.0)
     else:
-        # Unknown state — assume top of inning has just started.
-        away_remaining = 1.0 + full_after_this
-        home_remaining = 1.0 + full_after_this
+        progress = min(1.0, inning / 5.0)
 
-    # Symmetric Poisson rate per half-inning (≈ 0.55 r/half is MLB league avg).
-    LAMBDA = 0.55
-    pick_remaining = away_remaining if pick_is_away else home_remaining
-    opp_remaining = home_remaining if pick_is_away else away_remaining
-
-    if pick_remaining <= 0 and opp_remaining <= 0:
-        # F5 effectively over.
-        if pick_diff > 0:
-            return 100.0, "Won", "#10b981"
-        if pick_diff == 0:
-            return 50.0, "Push", "#f59e0b"
-        return 0.0, "Lost", "#f43f5e"
-
-    mean_future = LAMBDA * (pick_remaining - opp_remaining)
-    var_future = LAMBDA * (pick_remaining + opp_remaining)
-    std_future = math.sqrt(max(var_future, 0.05))
-
-    # P(pick wins F5) = P(future_diff >= 1 - pick_diff)
-    # Continuity correction: cutoff at (0.5 - pick_diff).
-    threshold = 0.5 - float(pick_diff)
-    z = (threshold - mean_future) / std_future
-    # Normal survival: 1 - Φ(z) = 0.5 * erfc(z / √2)
-    p_win = 0.5 * math.erfc(z / math.sqrt(2.0))
-
-    # Tiny pull toward base_confidence — captures surviving matchup edge.
-    # Weight peaks at 0.30 pre-game and decays to 0 by F5 completion.
-    half_innings_played = max(0.0, 10.0 - (away_remaining + home_remaining))
-    progress = min(1.0, half_innings_played / 10.0)
-    prior_weight = max(0.0, 0.30 * (1.0 - progress))
-    p_blend = (1.0 - prior_weight) * p_win + prior_weight * (max(0.0, min(100.0, base_confidence)) / 100.0)
-
-    p = max(0.0, min(100.0, 100.0 * p_blend))
+    state_bonus = (run_diff * 11.0) * (0.35 + 0.65 * progress)
+    blended = (base_confidence * (1.0 - 0.35 * progress)) + (base_confidence + state_bonus) * (0.35 * progress)
+    p = max(0.0, min(100.0, blended))
 
     if p >= 85:
         return p, "Very High", "#10b981"
@@ -754,10 +684,10 @@ _GAMECAST_CSS = """
 .gc-grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 14px;
+    gap: 12px;
 }
-@media (min-width: 1500px) {
-    .gc-grid { grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr); gap: 18px; }
+@media (min-width: 1180px) {
+    .gc-grid { grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); gap: 14px; }
 }
 @media (max-width: 760px) {
     .gc-card { padding: 12px 12px; border-radius: 14px; }
@@ -814,7 +744,7 @@ _GAMECAST_CSS = """
 /* ============== Top right metrics ============== */
 .gc-topbar {
     display: flex; flex-direction: column; align-items: stretch;
-    gap: 10px; margin: 4px 0 14px 0;
+    gap: 8px; margin: 2px 0 10px 0;
 }
 .gc-topbar-meta { flex: 1 1 auto; min-width: 0; }
 .gc-metrics {
@@ -825,7 +755,7 @@ _GAMECAST_CSS = """
     width: 100%;
 }
 .gc-metric {
-    padding: 0 14px;
+    padding: 0 10px;
     border-right: 1px solid var(--gc-border);
     text-align: center; min-width: 78px;
 }
@@ -846,8 +776,8 @@ _GAMECAST_CSS = """
     background: rgba(2, 6, 23, 0.55);
     border: 1px solid var(--gc-border-strong);
     border-radius: 12px;
-    padding: 12px 14px;
-    margin: 6px 0 14px 0;
+    padding: 10px 12px;
+    margin: 4px 0 10px 0;
     display: grid;
     grid-template-columns: 1fr auto;
     gap: 14px;
@@ -892,24 +822,17 @@ _GAMECAST_CSS = """
 .gc-line-table td.tot {
     font-weight: 900;
     color: var(--gc-emerald);
-    font-size: 0.96rem;
-    min-width: 38px;
+    font-size: 0.92rem;
+}
+.gc-line-table td.tot-h, .gc-line-table td.tot-e {
+    color: var(--gc-text-0);
+    font-weight: 800;
 }
 .gc-line-table td.future {
     color: var(--gc-text-3);
 }
 .gc-line-table th.divider, .gc-line-table td.divider {
     border-left: 1px solid var(--gc-border);
-    padding-left: 12px;
-}
-/* With only 5 inning columns + F5 total, give each cell a bit more breathing
-   room so the grid reads as a proper scoreboard rather than a cramped strip. */
-.gc-line-table th, .gc-line-table td {
-    min-width: 28px;
-}
-.gc-line-table th.divider {
-    color: var(--gc-emerald);
-    font-size: 0.66rem;
 }
 
 .gc-inning-marker {
@@ -943,9 +866,9 @@ _GAMECAST_CSS = """
 .gc-prob-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 14px;
+    gap: 10px;
     align-items: stretch;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
 }
 @media (max-width: 760px) { .gc-prob-row { grid-template-columns: 1fr; } }
 
@@ -954,7 +877,7 @@ _GAMECAST_CSS = """
         linear-gradient(135deg, rgba(16,185,129,0.10) 0%, rgba(2,6,23,0.55) 65%);
     border: 1px solid rgba(16,185,129,0.22);
     border-radius: 12px;
-    padding: 14px 16px;
+    padding: 12px 14px;
 }
 .gc-prob-lab {
     font-size: 0.62rem; font-weight: 900; letter-spacing: 0.14em;
@@ -988,7 +911,7 @@ _GAMECAST_CSS = """
     background: rgba(15, 23, 42, 0.55);
     border: 1px solid var(--gc-border);
     border-radius: 12px;
-    padding: 12px 14px;
+    padding: 10px 12px;
 }
 .gc-why-lab {
     font-size: 0.62rem; font-weight: 900; letter-spacing: 0.14em;
@@ -1008,10 +931,10 @@ _GAMECAST_CSS = """
 
 /* ============== Status bar (under main column) ============== */
 .gc-status {
-    margin-top: 10px;
+    margin-top: 8px;
     display: flex; align-items: center; justify-content: space-between;
     gap: 10px; flex-wrap: wrap;
-    padding: 10px 14px; border-radius: 10px;
+    padding: 8px 12px; border-radius: 10px;
     background: rgba(2, 6, 23, 0.55);
     border: 1px solid var(--gc-border);
 }
@@ -1140,6 +1063,12 @@ _GAMECAST_CSS = """
     .gc-side-card.gc-side-card-wide {
         grid-column: span 12;
     }
+}
+
+@media (min-width: 980px) and (max-width: 1179px) {
+    .gc-side-card,
+    .gc-side-card.gc-side-card-compact { grid-column: span 6; }
+    .gc-side-card.gc-side-card-wide { grid-column: span 12; }
 }
 
 @media (max-width: 1120px) {
@@ -1317,79 +1246,37 @@ def _render_linescore_html(
     sm_game = score_map.get(sm_key) or {}
     inn = _innings_for_matchup(matchup, innings_map)
 
-    # F5-only linescore: only innings 1-5 matter for this app, so we trim the
-    # grid to 5 inning columns + an "F5" total column. Hits/Errors are dropped
-    # because they're game-totals (9 innings), not F5 totals, and would mislead.
-    F5_LEN = 5
-
     if not inn:
-        # Pre-game / no data — show empty F5 grid
-        cells_a = "".join('<td class="future">-</td>' for _ in range(F5_LEN))
-        cells_h = "".join('<td class="future">-</td>' for _ in range(F5_LEN))
-        # Try score_map first for any F5 totals already cached
-        a_f5_pre = sm_game.get("away_f5")
-        h_f5_pre = sm_game.get("home_f5")
-        a_tot = "-" if a_f5_pre in (None, "") else int(a_f5_pre)
-        h_tot = "-" if h_f5_pre in (None, "") else int(h_f5_pre)
+        # Pre-game / no data — show empty grid
+        cells_a = "".join('<td class="future">-</td>' for _ in range(9))
+        cells_h = "".join('<td class="future">-</td>' for _ in range(9))
         return (
             '<div class="gc-line-wrap">'
             '<table class="gc-line-table"><thead><tr>'
             '<th class="team">&nbsp;</th>'
-            + "".join(f'<th>{i}</th>' for i in range(1, F5_LEN + 1))
-            + '<th class="divider">F5</th>'
+            + "".join(f'<th>{i}</th>' for i in range(1, 10))
+            + '<th class="divider">R</th><th>H</th><th>E</th>'
             '</tr></thead><tbody>'
             f'<tr><td class="team">{_esc(away_lab)}</td>{cells_a}'
-            f'<td class="tot divider">{a_tot}</td></tr>'
+            f'<td class="tot divider">-</td><td class="tot-h">-</td><td class="tot-e">-</td></tr>'
             f'<tr><td class="team">{_esc(home_lab)}</td>{cells_h}'
-            f'<td class="tot divider">{h_tot}</td></tr>'
+            f'<td class="tot divider">-</td><td class="tot-h">-</td><td class="tot-e">-</td></tr>'
             '</tbody></table>'
             '<div class="gc-inning-marker">'
-            '<div class="gc-inning-lab">F5</div>'
+            '<div class="gc-inning-lab">Inning</div>'
             '<div class="gc-inning-val">Pre</div>'
             '<div class="gc-diamond"></div>'
             '</div></div>'
         )
 
-    # Slice inning-by-inning runs to only the F5 window.
-    inn_a_full = inn["innings_away_runs"] or []
-    inn_h_full = inn["innings_home_runs"] or []
-    inn_a = list(inn_a_full[:F5_LEN]) + [None] * max(0, F5_LEN - len(inn_a_full))
-    inn_h = list(inn_h_full[:F5_LEN]) + [None] * max(0, F5_LEN - len(inn_h_full))
-
-    # F5 R = sum of runs scored in innings 1-5. Prefer score_map's cached
-    # away_f5/home_f5 (already F5-aware) when present, else compute from slice.
-    def _sum_safe(vals):
-        return sum(int(v) for v in vals if v is not None)
-    a_f5 = sm_game.get("away_f5")
-    h_f5 = sm_game.get("home_f5")
-    a_R = int(a_f5) if a_f5 not in (None, "") else _sum_safe(inn_a)
-    h_R = int(h_f5) if h_f5 not in (None, "") else _sum_safe(inn_h)
-
+    inn_a = inn["innings_away_runs"]
+    inn_h = inn["innings_home_runs"]
+    a_R = inn["away_R"]; h_R = inn["home_R"]
+    a_H = inn["away_H"]; h_H = inn["home_H"]
+    a_E = inn["away_E"]; h_E = inn["home_E"]
     cur = inn.get("current_inning")
     state = (inn.get("inning_state") or "").lower()
     is_final = bool(inn.get("is_final"))
-    status_str = str(inn.get("status") or sm_game.get("status") or "").lower()
-    f5_complete = bool(sm_game.get("can_grade")) or (
-        cur is not None and (
-            int(cur) > 5
-            or (int(cur) == 5 and state in ("end", "middle", "mid", "bottom", "bot") and inn_h[4] is not None)
-        )
-    )
-
-    # Pre-game detection: API can return an `inn` stub before first pitch with
-    # no innings logged yet. Treat any of these as "not started":
-    #   - status string matches our pre-game keyword list (scheduled, warmup,
-    #     pre-game, postponed, delayed start, etc.)
-    #   - no current inning AND no innings have any runs recorded yet
-    # Use the shared phase classifier so the linescore marker stays in lockstep
-    # with the slate-level eyebrow (no "PRE / Live" mismatch).
-    phase = _phase_from_inn(inn)
-    no_runs_yet = all(v is None for v in inn_a) and all(v is None for v in inn_h)
-    is_pre_game = (
-        phase == "pre" or (
-            not is_final and not f5_complete and cur is None and no_runs_yet
-        )
-    )
 
     def _cell(val: Optional[int]) -> str:
         if val is None:
@@ -1399,17 +1286,11 @@ def _render_linescore_html(
     cells_a = "".join(_cell(v) for v in inn_a)
     cells_h = "".join(_cell(v) for v in inn_h)
 
-    # Marker: pre-game → "Pre", F5 done → "F5 Final", live → "Top/Bot/Mid/End N",
-    # unknown live state → "Live".
-    if is_pre_game:
-        marker_label = "Pre"
-    elif f5_complete or is_final:
-        marker_label = "F5 Final"
+    if is_final:
+        marker_label = "Final"
     elif cur is not None:
         prefix = {"top": "Top", "middle": "Mid", "bottom": "Bot", "end": "End"}.get(state, "")
-        # Clamp display to F5 window even if inning > 5 (shouldn't happen given f5_complete check, but safe)
-        display_inning = min(int(cur), 5)
-        marker_label = f"{prefix} {display_inning}".strip()
+        marker_label = f"{prefix} {cur}".strip()
     else:
         marker_label = "Live"
 
@@ -1417,16 +1298,16 @@ def _render_linescore_html(
         '<div class="gc-line-wrap">'
         '<table class="gc-line-table"><thead><tr>'
         '<th class="team">&nbsp;</th>'
-        + "".join(f'<th>{i}</th>' for i in range(1, F5_LEN + 1))
-        + '<th class="divider">F5</th>'
+        + "".join(f'<th>{i}</th>' for i in range(1, 10))
+        + '<th class="divider">R</th><th>H</th><th>E</th>'
         '</tr></thead><tbody>'
         f'<tr><td class="team">{_esc(away_lab)}</td>{cells_a}'
-        f'<td class="tot divider">{a_R}</td></tr>'
+        f'<td class="tot divider">{a_R}</td><td class="tot-h">{a_H}</td><td class="tot-e">{a_E}</td></tr>'
         f'<tr><td class="team">{_esc(home_lab)}</td>{cells_h}'
-        f'<td class="tot divider">{h_R}</td></tr>'
+        f'<td class="tot divider">{h_R}</td><td class="tot-h">{h_H}</td><td class="tot-e">{h_E}</td></tr>'
         '</tbody></table>'
         '<div class="gc-inning-marker">'
-        '<div class="gc-inning-lab">F5</div>'
+        '<div class="gc-inning-lab">Inning</div>'
         f'<div class="gc-inning-val">{_esc(marker_label)}</div>'
         '<div class="gc-diamond"></div>'
         '</div></div>'
@@ -1451,13 +1332,34 @@ def _render_metrics_strip(row: pd.Series) -> str:
     )
 
 
+def _prob_to_american_odds(prob: float) -> str:
+    """Convert win probability (0-100) to implied American odds."""
+    p = max(0.01, min(99.99, float(prob))) / 100.0
+    if p >= 0.5:
+        odds = -int(round((p / (1.0 - p)) * 100.0))
+    else:
+        odds = int(round(((1.0 - p) / p) * 100.0))
+    return f"{odds:+d}"
+
+
+def _prob_to_american_odds(prob: float) -> str:
+    """Convert probability percentage (0-100) to implied American odds."""
+    p = max(0.01, min(99.99, float(prob))) / 100.0
+    if p >= 0.5:
+        odds = -int(round((p / (1.0 - p)) * 100.0))
+    else:
+        odds = int(round(((1.0 - p) / p) * 100.0))
+    return f"{odds:+d}"
+
+
 def _render_prob_card(prob: float, trend: str, color: str) -> str:
     cls = "amber" if color == "#f59e0b" else ("rose" if color == "#f43f5e" else ("muted" if color == "#94a3b8" else ""))
     fill = max(0.0, min(100.0, prob))
+    implied_odds = _prob_to_american_odds(prob)
     return (
         '<div class="gc-prob-card">'
         '<div class="gc-prob-lab">Live Hit Probability</div>'
-        f'<div class="gc-prob-big" style="color:{color};">{prob:.1f}%</div>'
+        f'<div class="gc-prob-big" style="color:{color};">{prob:.1f}% <span style="font-size:0.52em;opacity:0.95;">· {implied_odds}</span></div>'
         f'<div class="gc-prob-trend {cls}">{_esc(trend)} <span style="opacity:0.7;">↗</span></div>'
         f'<div class="gc-prob-bar"><div class="gc-prob-bar-fill" style="width:{fill:.1f}%; background: linear-gradient(90deg, {color}, {color}cc);"></div></div>'
         '</div>'
@@ -1587,140 +1489,44 @@ def _render_key_reasons_card(reasons: List[str]) -> str:
     )
 
 
-def evaluate_f5_criteria(row: pd.Series, intel: Dict[str, Any]) -> List[Tuple[str, bool, str]]:
+def evaluate_f5_criteria(row: pd.Series, intel: Dict[str, Any]) -> List[Tuple[str, bool]]:
     """
-    F5-specific qualification checklist for the side panel.
-
-    Per the strategy, a healthy F5 lock should clear:
-      1. ERA gap >= 2.0  (>= 2.5 is "elite")
-      2. Target pitcher ERA <= 2.50
-      3. Opp pitcher ERA >= 4.50
-      4. Strikeouts higher on the target side
-      5. Bonus: opponent trending BAD  (proxy: opp ERA >= 5.00)
-
-    Returns a list of (label, passed, detail) triples. `detail` is a short
-    factual snippet shown next to the chip. When intel is missing for a row
-    (e.g. boards didn't surface an ERA), the check is forced False with a
-    "data missing" hint so it shows as unmet rather than silently passing.
+    Build a compact checklist for quick qualification context in the side panel.
+    Uses available row/intel fields only (safe fallback when values are missing).
     """
-    matchup = str(row.get("Matchup", ""))
-    pick = re.sub(r"\bF5\s*", "", str(row.get("Suggested F5 Pick", "")), flags=re.I).strip()
-    away = matchup.split(" @ ")[0].strip() if " @ " in matchup else ""
-    home = matchup.split(" @ ")[1].strip() if " @ " in matchup else ""
-    pick_is_away = bool(pick) and pick.lower() == away.lower()
-
-    a_era = intel.get("away_era") if intel else None
-    h_era = intel.get("home_era") if intel else None
-    a_k = intel.get("away_k") if intel else None
-    h_k = intel.get("home_k") if intel else None
-
-    if a_era is not None and h_era is not None:
-        target_era = a_era if pick_is_away else h_era
-        opp_era = h_era if pick_is_away else a_era
-    else:
-        target_era = a_era if pick_is_away else h_era
-        opp_era = h_era if pick_is_away else a_era
-
-    if a_k is not None and h_k is not None:
-        target_k = a_k if pick_is_away else h_k
-        opp_k = h_k if pick_is_away else a_k
-        k_diff = int(target_k) - int(opp_k)
-    else:
-        target_k = opp_k = None
-        k_diff = None
-
-    # 1) ERA gap >= 2.0 (favoring our side — i.e. opp_era - target_era >= 2.0).
-    if target_era is not None and opp_era is not None:
-        gap = float(opp_era) - float(target_era)
-        if gap >= 2.5:
-            era_gap_label = f"ERA gap ≥ 2.0 (elite +{gap:.2f})"
-        else:
-            era_gap_label = f"ERA gap ≥ 2.0 (now +{gap:.2f})"
-        era_gap_pass = gap >= 2.0
-    else:
-        era_gap_label = "ERA gap ≥ 2.0 (data missing)"
-        era_gap_pass = False
-
-    # 2) Target ERA <= 2.50
-    if target_era is not None:
-        target_era_pass = float(target_era) <= 2.50
-        target_era_label = f"Target pitcher ERA ≤ 2.50 (now {float(target_era):.2f})"
-    else:
-        target_era_pass = False
-        target_era_label = "Target pitcher ERA ≤ 2.50 (data missing)"
-
-    # 3) Opp ERA >= 4.50
-    if opp_era is not None:
-        opp_era_pass = float(opp_era) >= 4.50
-        opp_era_label = f"Opp pitcher ERA ≥ 4.50 (now {float(opp_era):.2f})"
-    else:
-        opp_era_pass = False
-        opp_era_label = "Opp pitcher ERA ≥ 4.50 (data missing)"
-
-    # 4) Strikeouts higher on target side
-    if k_diff is not None:
-        k_pass = k_diff > 0
-        k_label = f"Strikeouts higher on our side (Δ {k_diff:+d})"
-    else:
-        k_pass = False
-        k_label = "Strikeouts higher on our side (data missing)"
-
-    # 5) Bonus — opp trending BAD. Quick proxy: opp ERA >= 5.00.
-    if opp_era is not None:
-        bonus_pass = float(opp_era) >= 5.00
-        bonus_label = (
-            f"Bonus · opponent in slump (opp ERA {float(opp_era):.2f})"
-            if bonus_pass
-            else f"Bonus · opponent in slump (opp ERA {float(opp_era):.2f})"
-        )
-    else:
-        bonus_pass = False
-        bonus_label = "Bonus · opponent in slump (data missing)"
+    conf = float(row.get("Avg Confidence", 0.0) or 0.0)
+    sample = float(row.get("Avg Sample", 0.0) or 0.0)
+    models = int(row.get("Models On Bet", 0) or 0)
+    era_gap = float(intel.get("era_gap", 0.0) or 0.0)
+    k_diff = float(intel.get("k_diff", 0.0) or 0.0)
 
     return [
-        (era_gap_label, era_gap_pass, ""),
-        (target_era_label, target_era_pass, ""),
-        (opp_era_label, opp_era_pass, ""),
-        (k_label, k_pass, ""),
-        (bonus_label, bonus_pass, ""),
+        ("Confidence >= 70%", conf >= 70.0),
+        ("Sample >= 0.45", sample >= 0.45),
+        ("Models aligned >= 2", models >= 2),
+        ("ERA gap positive", era_gap > 0.0),
+        ("K edge positive", k_diff > 0.0),
     ]
 
 
-def _render_f5_criteria_card(criteria: List[Tuple[str, bool, str]]) -> str:
+def _render_f5_criteria_card(criteria: List[Tuple[str, bool]]) -> str:
     if not criteria:
         return ""
-    passed = sum(1 for c in criteria if len(c) >= 2 and bool(c[1]))
-    total = len(criteria)
     rows = ""
-    for item in criteria:
-        if len(item) == 3:
-            label, ok, _detail = item
-        else:
-            label, ok = item[0], item[1]
-        if ok:
-            mark = "✅"
-            cls = "color:var(--gc-emerald);"
-            label_cls = "color:var(--gc-text-0); font-weight:700;"
-        else:
-            mark = "❌"
-            cls = "color:var(--gc-rose);"
-            label_cls = "color:var(--gc-text-2); font-weight:600;"
+    for label, ok in criteria:
+        mark = "✓" if ok else "•"
+        cls = "color:var(--gc-emerald);" if ok else "color:var(--gc-text-3);"
         rows += (
-            '<div class="gc-key-item" style="padding:5px 0;">'
-            f'<span class="gc-key-item-icon" style="background:transparent; {cls} font-size:0.95rem;">{mark}</span>'
-            f'<span style="{label_cls} line-height:1.25;">{_esc(label)}</span>'
+            '<div class="gc-key-item">'
+            f'<span class="gc-key-item-icon" style="{cls}">{_esc(mark)}</span>'
+            f'<span>{_esc(label)}</span>'
             '</div>'
         )
-    summary = f"{passed} / {total} cleared"
-    summary_color = "var(--gc-emerald)" if passed >= 4 else ("var(--gc-amber)" if passed >= 2 else "var(--gc-rose)")
     return (
         '<div class="gc-side-card gc-side-card-compact">'
-        '<div class="gc-side-head" style="display:flex; justify-content:space-between; align-items:center;">'
-        '<span style="display:inline-flex; align-items:center; gap:8px;">'
+        '<div class="gc-side-head">'
         '<span class="gc-side-icon" style="background:rgba(16,185,129,0.14);color:var(--gc-emerald);">✓</span>'
         'F5 Criteria'
-        '</span>'
-        f'<span style="font-family:ui-monospace,monospace; font-size:0.72rem; font-weight:900; letter-spacing:0.04em; color:{summary_color};">{summary}</span>'
         '</div>'
         f'{rows}'
         '</div>'
@@ -2050,31 +1856,24 @@ def render_gamecast_mini_list(
             h_R = inn_data.get("home_R", 0)
             cur = inn_data.get("current_inning") or 0
             state = (inn_data.get("inning_state") or "").lower()
-            phase_kind = _phase_from_inn(inn_data)
-            if phase_kind == "final":
+            is_final = bool(inn_data.get("is_final"))
+            if is_final:
                 stat_tag = "Final · F5"
-            elif phase_kind == "live" and cur:
+            elif cur:
                 prefix = {"top": "Top", "middle": "Mid", "bottom": "Bot", "end": "End"}.get(state, "")
-                stat_tag = f"{prefix} {cur}".strip() or "Live"
+                stat_tag = f"{prefix} {cur}".strip()
             else:
                 stat_tag = "Pre · F5"
-            # Pre-game has no real score yet — show em-dashes instead of phantom 0s.
-            if phase_kind == "pre":
-                a_disp = '<span class="gc-mini-score-num" style="color:var(--gc-text-3);">—</span>'
-                h_disp = '<span class="gc-mini-score-num" style="color:var(--gc-text-3);">—</span>'
-            else:
-                a_disp = f'<span class="gc-mini-score-num">{a_R}</span>'
-                h_disp = f'<span class="gc-mini-score-num">{h_R}</span>'
             score_html = (
                 '<div>'
                 '<div class="gc-mini-line">'
                 '<div class="gc-mini-side">'
                 f'<span class="gc-mini-team">{_esc(away_lab)}</span>'
-                f'{a_disp}'
+                f'<span class="gc-mini-score-num">{a_R}</span>'
                 '</div>'
                 '<span class="gc-mini-vs">·</span>'
                 '<div class="gc-mini-side">'
-                f'{h_disp}'
+                f'<span class="gc-mini-score-num">{h_R}</span>'
                 f'<span class="gc-mini-team">{_esc(home_lab)}</span>'
                 '</div>'
                 '</div>'
@@ -2095,9 +1894,10 @@ def render_gamecast_mini_list(
 
         # Prob column
         prob_cls = "amber" if color == "#f59e0b" else ("rose" if color == "#f43f5e" else ("muted" if color == "#94a3b8" else ""))
+        implied_odds = _prob_to_american_odds(prob)
         prob_html = (
             '<div class="gc-mini-prob-col">'
-            f'<div class="gc-mini-prob {prob_cls}" style="color:{color};">{prob:.0f}%</div>'
+            f'<div class="gc-mini-prob {prob_cls}" style="color:{color};">{prob:.0f}% <span style="font-size:0.68em;opacity:0.95;">· {implied_odds}</span></div>'
             f'<div class="gc-mini-prob-bar"><div class="gc-mini-prob-fill" style="width:{max(0.0, min(100.0, prob)):.0f}%; background:linear-gradient(90deg, {color}, {color}aa);"></div></div>'
             f'<div class="gc-mini-prob-trend">{_esc(trend)}</div>'
             '</div>'
