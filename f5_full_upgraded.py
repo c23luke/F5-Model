@@ -24,6 +24,7 @@ from gamecast_ui import (
     fetch_innings_for_date,
     build_matchup_intel,
     _phase_from_inn,
+    evaluate_f5_criteria,
 )
 
 MLB_URL = "https://www.mlb.com/probable-pitchers/"
@@ -5497,6 +5498,56 @@ def build_all_best_bets(
     return df
 
 
+def rerank_best_bets_by_criteria(
+    df: pd.DataFrame,
+    matchup_intel: Dict[str, Dict[str, Any]],
+) -> pd.DataFrame:
+    """Re-rank the unified best-bets list using the F5 strategy criteria first.
+
+    Sort priority:
+      1. main criteria passed (out of 4: ERA gap, target ERA, opp ERA, K edge)
+      2. bonus criterion passed (opponent in slump)  -- tie-breaker
+      3. avg confidence    -- so a 90% pick beats an 80% pick
+      4. tier rank         -- 100% LOCK > CORE > SHARP > VALUE > BT-ONLY
+      5. consensus / EV / models  -- usual fallback chain
+
+    The Lock-of-the-Day is row 0 of the returned df. This stops the bug where
+    a low-confidence "100% LOCK" picked by 3 systems outranked a higher-
+    confidence pick that cleared every F5 criterion.
+    """
+    if df is None or df.empty:
+        return df
+
+    out = df.copy().reset_index(drop=True)
+
+    main_pass: List[int] = []
+    bonus_pass: List[int] = []
+    for _, r in out.iterrows():
+        intel = (matchup_intel or {}).get(str(r.get("Matchup", ""))) or {}
+        try:
+            criteria = evaluate_f5_criteria(r, intel)
+        except Exception:
+            criteria = []
+        # First 4 are the hard requirements, 5th is the slump bonus.
+        m = sum(1 for c in criteria[:4] if len(c) >= 2 and bool(c[1]))
+        b = 1 if (len(criteria) >= 5 and len(criteria[4]) >= 2 and bool(criteria[4][1])) else 0
+        main_pass.append(m)
+        bonus_pass.append(b)
+    out["_main_pass"] = main_pass
+    out["_bonus_pass"] = bonus_pass
+    out["_tier_rank"] = out["Tier"].map(_TIER_RANK).fillna(0)
+    # Treat NaN EV as -inf so picks without odds don't artificially win the
+    # tie-breaker over picks with real +EV numbers.
+    out["_ev_sort"] = pd.to_numeric(out.get("EV"), errors="coerce").fillna(-1e9)
+
+    out = out.sort_values(
+        by=["_main_pass", "_bonus_pass", "Avg Confidence", "_tier_rank",
+            "Consensus Score", "_ev_sort", "Models On Bet"],
+        ascending=[False, False, False, False, False, False, False],
+    ).drop(columns=["_main_pass", "_bonus_pass", "_tier_rank", "_ev_sort"]).reset_index(drop=True)
+    return out
+
+
 def _score_payload_for_card(matchup: str, score_map: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Lightweight version of scoreboard_payload that returns just what our card needs."""
     pl = scoreboard_payload(matchup, score_map)
@@ -6167,6 +6218,12 @@ def main() -> None:
             save_today_best_bets_cache(all_best_bets_df)
     else:
         all_best_bets_df = frozen_today_best_bets
+
+    # Re-rank by F5 strategy criteria first, then confidence, then tier.
+    # This guarantees a 5/5-criteria 90%-confidence pick outranks a
+    # 4/5-criteria 80%-confidence pick even if the latter is tagged
+    # "100% LOCK" by the legacy unanimity classifier.
+    all_best_bets_df = rerank_best_bets_by_criteria(all_best_bets_df, today_matchup_intel)
     all_best_bets_top_row: Optional[pd.Series] = (
         all_best_bets_df.iloc[0] if not all_best_bets_df.empty else None
     )
