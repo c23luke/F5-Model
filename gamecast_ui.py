@@ -345,8 +345,17 @@ def _hit_probability(
     Returns (probability_0_100, trend_label, trend_color_hex).
     Blends model confidence with current F5 run differential and inning progress.
     """
+    def _pregame_prob(raw_conf: float) -> float:
+        """
+        Compress raw model confidence into a realistic pregame win range.
+        Prevents impossible-looking pregame outputs like 97%+.
+        """
+        c = max(0.0, min(100.0, float(raw_conf)))
+        compressed = 50.0 + (c - 50.0) * 0.45
+        return max(42.0, min(74.0, compressed))
+
     if " @ " not in matchup:
-        return max(0.0, min(100.0, base_confidence)), "Pre-game", "#94a3b8"
+        return _pregame_prob(base_confidence), "Pre-game", "#94a3b8"
 
     away, home = [s.strip() for s in matchup.split(" @ ", 1)]
     key = f"{_canonical_team_key(away)}|{_canonical_team_key(home)}"
@@ -368,10 +377,21 @@ def _hit_probability(
         return 0.0, "Lost", "#f43f5e"
 
     if not game:
-        return max(0.0, min(100.0, base_confidence)), "Pre-game", "#94a3b8"
+        return _pregame_prob(base_confidence), "Pre-game", "#94a3b8"
 
-    af5 = int(game.get("away_f5", 0) or 0)
-    hf5 = int(game.get("home_f5", 0) or 0)
+    # Treat scheduled/no-activity states as pre-game even when feeds expose
+    # partial fields; avoids phantom live confidence spikes before first pitch.
+    status_l = str(game.get("status") or "").lower()
+    inning_now = _to_int(game.get("current_inning"))
+    away_f5 = int(game.get("away_f5", 0) or 0)
+    home_f5 = int(game.get("home_f5", 0) or 0)
+    no_score_activity = away_f5 == 0 and home_f5 == 0
+    is_status_pregame = any(k in status_l for k in _PRE_GAME_STATUS_KEYWORDS)
+    if is_status_pregame or (inning_now in (None, 0) and no_score_activity):
+        return _pregame_prob(base_confidence), "Pre-game", "#94a3b8"
+
+    af5 = away_f5
+    hf5 = home_f5
     if pick_team == away.lower():
         run_diff = af5 - hf5
     elif pick_team == home.lower():
