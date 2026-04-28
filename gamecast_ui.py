@@ -683,11 +683,11 @@ _GAMECAST_CSS = """
 /* ============== Hero / card 2-col grid ============== */
 .gc-grid {
     display: grid;
-    grid-template-columns: 1.55fr 1fr;
-    gap: 18px;
+    grid-template-columns: 1fr;
+    gap: 14px;
 }
-@media (max-width: 980px) {
-    .gc-grid { grid-template-columns: 1fr; }
+@media (min-width: 1500px) {
+    .gc-grid { grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr); gap: 18px; }
 }
 @media (max-width: 760px) {
     .gc-card { padding: 12px 12px; border-radius: 14px; }
@@ -713,7 +713,8 @@ _GAMECAST_CSS = """
     .gc-matchup-abbr { display: inline; }
 }
 
-.gc-main { min-width: 0; }
+.gc-main { min-width: 0; overflow: hidden; }
+.gc-side { min-width: 0; }
 
 /* ============== Eyebrow + matchup ============== */
 .gc-eyebrow {
@@ -723,9 +724,18 @@ _GAMECAST_CSS = """
 .gc-matchup {
     font-size: 1.85rem; font-weight: 800; color: var(--gc-text-0);
     letter-spacing: -0.018em; line-height: 1.15;
+    word-break: keep-all;
+    overflow-wrap: normal;
+    hyphens: none;
+    max-width: 100%;
 }
 .gc-matchup-card { font-size: 1.45rem; }
 .gc-matchup-abbr { display: none; }
+.gc-matchup-full, .gc-matchup-abbr {
+    word-break: keep-all;
+    overflow-wrap: normal;
+    hyphens: none;
+}
 .gc-pickline {
     color: var(--gc-text-1); font-size: 0.95rem; margin-top: 6px; margin-bottom: 4px;
 }
@@ -733,13 +743,16 @@ _GAMECAST_CSS = """
 
 /* ============== Top right metrics ============== */
 .gc-topbar {
-    display: flex; align-items: flex-start; justify-content: space-between;
-    gap: 18px; margin: 4px 0 14px 0;
+    display: flex; flex-direction: column; align-items: stretch;
+    gap: 10px; margin: 4px 0 14px 0;
 }
-.gc-topbar-meta { flex: 1; min-width: 0; }
+.gc-topbar-meta { flex: 1 1 auto; min-width: 0; }
 .gc-metrics {
-    display: flex; gap: 0; align-items: stretch;
-    border-left: 1px solid var(--gc-border);
+    display: flex; gap: 0; align-items: stretch; flex: 0 0 auto;
+    border-top: 1px solid var(--gc-border);
+    border-left: none;
+    padding-top: 8px;
+    width: 100%;
 }
 .gc-metric {
     padding: 0 14px;
@@ -942,18 +955,24 @@ _GAMECAST_CSS = """
 }
 
 /* ============== Side panel (bet slip + reasons + tracking) ============== */
-.gc-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.gc-side {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 10px;
+    min-width: 0;
+}
 .gc-side-card {
     background: rgba(2, 6, 23, 0.62);
     border: 1px solid var(--gc-border);
     border-radius: 12px;
-    padding: 12px 14px;
+    padding: 10px 12px;
+    grid-column: span 6;
 }
 .gc-side-head {
     display: flex; align-items: center; gap: 8px;
-    font-size: 0.70rem; font-weight: 900; letter-spacing: 0.14em;
+    font-size: 0.66rem; font-weight: 900; letter-spacing: 0.13em;
     text-transform: uppercase; color: var(--gc-text-2);
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 .gc-side-icon {
     width: 16px; height: 16px; border-radius: 4px;
@@ -997,8 +1016,8 @@ _GAMECAST_CSS = """
 
 .gc-key-item {
     display: flex; align-items: flex-start; gap: 10px;
-    padding: 6px 0;
-    color: var(--gc-text-1); font-size: 0.84rem; font-weight: 600;
+    padding: 4px 0;
+    color: var(--gc-text-1); font-size: 0.80rem; font-weight: 600;
 }
 .gc-key-item-icon {
     flex: 0 0 18px; height: 18px; border-radius: 5px;
@@ -1008,10 +1027,10 @@ _GAMECAST_CSS = """
 }
 
 .gc-track-row {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap;
 }
 .gc-track-stack {
-    display: flex; align-items: center; gap: -6px;
+    display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap;
 }
 .gc-track-avatar {
     width: 28px; height: 28px; border-radius: 50%;
@@ -1031,8 +1050,27 @@ _GAMECAST_CSS = """
     display: inline-flex; align-items: center; gap: 6px;
     color: var(--gc-emerald); font-weight: 900;
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.95rem;
+    white-space: nowrap;
 }
 .gc-track-roi.neg { color: var(--gc-rose); }
+
+.gc-side-card.gc-side-card-wide { grid-column: span 12; }
+.gc-side-card.gc-side-card-compact { grid-column: span 6; }
+
+@media (max-width: 1200px) {
+    .gc-side-card,
+    .gc-side-card.gc-side-card-compact,
+    .gc-side-card.gc-side-card-wide {
+        grid-column: span 12;
+    }
+}
+
+@media (max-width: 1120px) {
+    .gc-metrics {
+        width: 100%;
+        border-top: 1px solid var(--gc-border);
+    }
+}
 
 /* ============== MINI variant (compact horizontal gamecast) ============== */
 .gc-mini {
@@ -1380,7 +1418,7 @@ def _render_bet_slip(row: pd.Series, default_wager: float = 100.0) -> str:
     to_win = (default_wager * (dec - 1.0)) if dec else 0.0
     odds_str = f"{int(odds_f):+d}"
     return (
-        '<div class="gc-side-card">'
+        '<div class="gc-side-card gc-side-card-compact">'
         '<div class="gc-side-head">'
         '<span class="gc-side-icon">⚡</span>'
         'Quick Bet Slip'
@@ -1414,7 +1452,7 @@ def _render_key_reasons_card(reasons: List[str]) -> str:
             '</div>'
         )
     return (
-        '<div class="gc-side-card">'
+        '<div class="gc-side-card gc-side-card-compact">'
         '<div class="gc-side-head">'
         '<span class="gc-side-icon" style="background:var(--gc-cyan-soft); color:var(--gc-cyan);">🛡</span>'
         'Key Reasons'
@@ -1424,44 +1462,140 @@ def _render_key_reasons_card(reasons: List[str]) -> str:
     )
 
 
-def evaluate_f5_criteria(row: pd.Series, intel: Dict[str, Any]) -> List[Tuple[str, bool]]:
+def evaluate_f5_criteria(row: pd.Series, intel: Dict[str, Any]) -> List[Tuple[str, bool, str]]:
     """
-    Build a compact checklist for quick qualification context in the side panel.
-    Uses available row/intel fields only (safe fallback when values are missing).
+    F5-specific qualification checklist for the side panel.
+
+    Per the strategy, a healthy F5 lock should clear:
+      1. ERA gap >= 2.0  (>= 2.5 is "elite")
+      2. Target pitcher ERA <= 2.50
+      3. Opp pitcher ERA >= 4.50
+      4. Strikeouts higher on the target side
+      5. Bonus: opponent trending BAD  (proxy: opp ERA >= 5.00)
+
+    Returns a list of (label, passed, detail) triples. `detail` is a short
+    factual snippet shown next to the chip. When intel is missing for a row
+    (e.g. boards didn't surface an ERA), the check is forced False with a
+    "data missing" hint so it shows as unmet rather than silently passing.
     """
-    conf = float(row.get("Avg Confidence", 0.0) or 0.0)
-    sample = float(row.get("Avg Sample", 0.0) or 0.0)
-    models = int(row.get("Models On Bet", 0) or 0)
-    era_gap = float(intel.get("era_gap", 0.0) or 0.0)
-    k_diff = float(intel.get("k_diff", 0.0) or 0.0)
+    matchup = str(row.get("Matchup", ""))
+    pick = re.sub(r"\bF5\s*", "", str(row.get("Suggested F5 Pick", "")), flags=re.I).strip()
+    away = matchup.split(" @ ")[0].strip() if " @ " in matchup else ""
+    home = matchup.split(" @ ")[1].strip() if " @ " in matchup else ""
+    pick_is_away = bool(pick) and pick.lower() == away.lower()
+
+    a_era = intel.get("away_era") if intel else None
+    h_era = intel.get("home_era") if intel else None
+    a_k = intel.get("away_k") if intel else None
+    h_k = intel.get("home_k") if intel else None
+
+    if a_era is not None and h_era is not None:
+        target_era = a_era if pick_is_away else h_era
+        opp_era = h_era if pick_is_away else a_era
+    else:
+        target_era = a_era if pick_is_away else h_era
+        opp_era = h_era if pick_is_away else a_era
+
+    if a_k is not None and h_k is not None:
+        target_k = a_k if pick_is_away else h_k
+        opp_k = h_k if pick_is_away else a_k
+        k_diff = int(target_k) - int(opp_k)
+    else:
+        target_k = opp_k = None
+        k_diff = None
+
+    # 1) ERA gap >= 2.0 (favoring our side — i.e. opp_era - target_era >= 2.0).
+    if target_era is not None and opp_era is not None:
+        gap = float(opp_era) - float(target_era)
+        if gap >= 2.5:
+            era_gap_label = f"ERA gap ≥ 2.0 (elite +{gap:.2f})"
+        else:
+            era_gap_label = f"ERA gap ≥ 2.0 (now +{gap:.2f})"
+        era_gap_pass = gap >= 2.0
+    else:
+        era_gap_label = "ERA gap ≥ 2.0 (data missing)"
+        era_gap_pass = False
+
+    # 2) Target ERA <= 2.50
+    if target_era is not None:
+        target_era_pass = float(target_era) <= 2.50
+        target_era_label = f"Target pitcher ERA ≤ 2.50 (now {float(target_era):.2f})"
+    else:
+        target_era_pass = False
+        target_era_label = "Target pitcher ERA ≤ 2.50 (data missing)"
+
+    # 3) Opp ERA >= 4.50
+    if opp_era is not None:
+        opp_era_pass = float(opp_era) >= 4.50
+        opp_era_label = f"Opp pitcher ERA ≥ 4.50 (now {float(opp_era):.2f})"
+    else:
+        opp_era_pass = False
+        opp_era_label = "Opp pitcher ERA ≥ 4.50 (data missing)"
+
+    # 4) Strikeouts higher on target side
+    if k_diff is not None:
+        k_pass = k_diff > 0
+        k_label = f"Strikeouts higher on our side (Δ {k_diff:+d})"
+    else:
+        k_pass = False
+        k_label = "Strikeouts higher on our side (data missing)"
+
+    # 5) Bonus — opp trending BAD. Quick proxy: opp ERA >= 5.00.
+    if opp_era is not None:
+        bonus_pass = float(opp_era) >= 5.00
+        bonus_label = (
+            f"Bonus · opponent in slump (opp ERA {float(opp_era):.2f})"
+            if bonus_pass
+            else f"Bonus · opponent in slump (opp ERA {float(opp_era):.2f})"
+        )
+    else:
+        bonus_pass = False
+        bonus_label = "Bonus · opponent in slump (data missing)"
 
     return [
-        ("Confidence >= 70%", conf >= 70.0),
-        ("Sample >= 0.45", sample >= 0.45),
-        ("Models aligned >= 2", models >= 2),
-        ("ERA gap positive", era_gap > 0.0),
-        ("K edge positive", k_diff > 0.0),
+        (era_gap_label, era_gap_pass, ""),
+        (target_era_label, target_era_pass, ""),
+        (opp_era_label, opp_era_pass, ""),
+        (k_label, k_pass, ""),
+        (bonus_label, bonus_pass, ""),
     ]
 
 
-def _render_f5_criteria_card(criteria: List[Tuple[str, bool]]) -> str:
+def _render_f5_criteria_card(criteria: List[Tuple[str, bool, str]]) -> str:
     if not criteria:
         return ""
+    passed = sum(1 for c in criteria if len(c) >= 2 and bool(c[1]))
+    total = len(criteria)
     rows = ""
-    for label, ok in criteria:
-        mark = "✓" if ok else "•"
-        cls = "color:var(--gc-emerald);" if ok else "color:var(--gc-text-3);"
+    for item in criteria:
+        if len(item) == 3:
+            label, ok, _detail = item
+        else:
+            label, ok = item[0], item[1]
+        if ok:
+            mark = "✅"
+            cls = "color:var(--gc-emerald);"
+            label_cls = "color:var(--gc-text-0); font-weight:700;"
+        else:
+            mark = "❌"
+            cls = "color:var(--gc-rose);"
+            label_cls = "color:var(--gc-text-2); font-weight:600;"
         rows += (
-            '<div class="gc-key-item">'
-            f'<span class="gc-key-item-icon" style="{cls}">{_esc(mark)}</span>'
-            f'<span>{_esc(label)}</span>'
+            '<div class="gc-key-item" style="padding:5px 0;">'
+            f'<span class="gc-key-item-icon" style="background:transparent; {cls} font-size:0.95rem;">{mark}</span>'
+            f'<span style="{label_cls} line-height:1.25;">{_esc(label)}</span>'
             '</div>'
         )
+    summary = f"{passed} / {total} cleared"
+    summary_color = "var(--gc-emerald)" if passed >= 4 else ("var(--gc-amber)" if passed >= 2 else "var(--gc-rose)")
     return (
-        '<div class="gc-side-card">'
-        '<div class="gc-side-head">'
+        '<div class="gc-side-card gc-side-card-compact">'
+        '<div class="gc-side-head" style="display:flex; justify-content:space-between; align-items:center;">'
+        '<span style="display:inline-flex; align-items:center; gap:8px;">'
         '<span class="gc-side-icon" style="background:rgba(16,185,129,0.14);color:var(--gc-emerald);">✓</span>'
         'F5 Criteria'
+        '</span>'
+        f'<span style="font-family:ui-monospace,monospace; font-size:0.72rem; font-weight:900; letter-spacing:0.04em; color:{summary_color};">{summary}</span>'
         '</div>'
         f'{rows}'
         '</div>'
@@ -1487,7 +1621,9 @@ def _render_tracking_card(
             wins = int((status == "win").sum())
             losses = int((status == "loss").sum())
 
-    n_models = int(row.get("Models On Bet", 0) or 0)
+    n_models = int(
+        row.get("Models On Bet", row.get("Sharp Model Count", row.get("Model Count", 0))) or 0
+    )
     graded = wins + losses
     wr = (wins / graded * 100.0) if graded > 0 else 0.0
     roi = (wins * 0.909 - losses) / max(1, graded) * 100.0 if graded > 0 else 0.0
@@ -1516,7 +1652,7 @@ def _render_tracking_card(
         )
 
     return (
-        '<div class="gc-side-card" style="padding-top:10px;padding-bottom:10px;">'
+        '<div class="gc-side-card gc-side-card-compact" style="padding-top:10px;padding-bottom:10px;">'
         '<div class="gc-side-head" style="margin-bottom:6px;">'
         '<span class="gc-side-icon" style="background:rgba(34,211,238,0.16);color:#22d3ee;">📈</span>'
         'Tracking This Pick'
@@ -1789,24 +1925,31 @@ def render_gamecast_mini_list(
             h_R = inn_data.get("home_R", 0)
             cur = inn_data.get("current_inning") or 0
             state = (inn_data.get("inning_state") or "").lower()
-            is_final = bool(inn_data.get("is_final"))
-            if is_final:
+            phase_kind = _phase_from_inn(inn_data)
+            if phase_kind == "final":
                 stat_tag = "Final · F5"
-            elif cur:
+            elif phase_kind == "live" and cur:
                 prefix = {"top": "Top", "middle": "Mid", "bottom": "Bot", "end": "End"}.get(state, "")
-                stat_tag = f"{prefix} {cur}".strip()
+                stat_tag = f"{prefix} {cur}".strip() or "Live"
             else:
                 stat_tag = "Pre · F5"
+            # Pre-game has no real score yet — show em-dashes instead of phantom 0s.
+            if phase_kind == "pre":
+                a_disp = '<span class="gc-mini-score-num" style="color:var(--gc-text-3);">—</span>'
+                h_disp = '<span class="gc-mini-score-num" style="color:var(--gc-text-3);">—</span>'
+            else:
+                a_disp = f'<span class="gc-mini-score-num">{a_R}</span>'
+                h_disp = f'<span class="gc-mini-score-num">{h_R}</span>'
             score_html = (
                 '<div>'
                 '<div class="gc-mini-line">'
                 '<div class="gc-mini-side">'
                 f'<span class="gc-mini-team">{_esc(away_lab)}</span>'
-                f'<span class="gc-mini-score-num">{a_R}</span>'
+                f'{a_disp}'
                 '</div>'
                 '<span class="gc-mini-vs">·</span>'
                 '<div class="gc-mini-side">'
-                f'<span class="gc-mini-score-num">{h_R}</span>'
+                f'{h_disp}'
                 f'<span class="gc-mini-team">{_esc(home_lab)}</span>'
                 '</div>'
                 '</div>'

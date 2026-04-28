@@ -23,6 +23,7 @@ from gamecast_ui import (
     render_gamecast_empty,
     fetch_innings_for_date,
     build_matchup_intel,
+    _phase_from_inn,
 )
 
 MLB_URL = "https://www.mlb.com/probable-pitchers/"
@@ -6219,9 +6220,23 @@ def main() -> None:
                 rank=1,
             )
 
-        # Hero: top pick of the day
+        # Hero: top pick of the day. Eyebrow reflects the actual slate state —
+        # "TODAY" pre-first-pitch, "LIVE" once any game is in progress, "FINAL"
+        # once every game on the slip is graded.
+        try:
+            slate_phases = []
+            for _g in (today_innings_map or {}).values():
+                slate_phases.append(_phase_from_inn(_g) if _g else "pre")
+            if slate_phases and all(p == "final" for p in slate_phases):
+                _slate_eyebrow = "FINAL"
+            elif any(p == "live" for p in slate_phases):
+                _slate_eyebrow = "LIVE"
+            else:
+                _slate_eyebrow = "TODAY"
+        except Exception:
+            _slate_eyebrow = "TODAY"
         render_premium_section(
-            "LIVE",
+            _slate_eyebrow,
             "Lock of the Day",
             "Highest-tier qualified play across every model. Same card style as the list below.",
             tag=f"{len(all_best_bets_df)} best bets",
@@ -6243,12 +6258,15 @@ def main() -> None:
                 "Models are still evaluating today's slate.",
             )
 
-        # KPI strip — clean, just 4 metrics
+        # KPI strip — clean, just 4 metrics. The all-time line reads from the
+        # FULL tracker (every graded pick across every system), not just the
+        # Lock-of-the-Day file, so a 0-0-0 here actually means "nothing graded
+        # yet" rather than "we're only counting locks".
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Today W-L", lock_today_summary["record"])
-        k2.metric("Today WR", f"{lock_today_summary['win_rate']:.1f}%")
-        k3.metric("All-time W-L", lock_all_time_summary["record"])
-        k4.metric("Locks today", len(confidence_100_bets_df))
+        k1.metric("Today W-L", today_slip_summary["record"])
+        k2.metric("Today WR", f"{float(today_slip_summary.get('win_rate', 0.0)):.1f}%")
+        k3.metric("All-time W-L", full_tracker_summary["record"])
+        k4.metric("All-time WR", f"{float(full_tracker_summary.get('win_rate', 0.0)):.1f}%")
 
         # Live F5 scoreboard strip — only matchups on today's slip
         if not today_betslip_df.empty:
