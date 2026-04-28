@@ -1236,7 +1236,7 @@ def _render_linescore_html(
     score_map: Dict[str, Dict[str, Any]],
     innings_map: Dict[str, Dict[str, Any]],
 ) -> str:
-    """Render the inning-by-inning + R/H/E + inning marker block."""
+    """Render F5-only innings block (1-5 + F5 total) and phase marker."""
     if " @ " not in matchup:
         return ""
     away_full, home_full = [s.strip() for s in matchup.split(" @ ", 1)]
@@ -1245,38 +1245,52 @@ def _render_linescore_html(
     sm_key = f"{_canonical_team_key(away_full)}|{_canonical_team_key(home_full)}"
     sm_game = score_map.get(sm_key) or {}
     inn = _innings_for_matchup(matchup, innings_map)
+    F5_LEN = 5
 
     if not inn:
-        # Pre-game / no data — show empty grid
-        cells_a = "".join('<td class="future">-</td>' for _ in range(9))
-        cells_h = "".join('<td class="future">-</td>' for _ in range(9))
+        cells_a = "".join('<td class="future">-</td>' for _ in range(F5_LEN))
+        cells_h = "".join('<td class="future">-</td>' for _ in range(F5_LEN))
+        a_f5 = sm_game.get("away_f5")
+        h_f5 = sm_game.get("home_f5")
+        a_tot = "-" if a_f5 in (None, "") else int(a_f5)
+        h_tot = "-" if h_f5 in (None, "") else int(h_f5)
         return (
             '<div class="gc-line-wrap">'
             '<table class="gc-line-table"><thead><tr>'
             '<th class="team">&nbsp;</th>'
-            + "".join(f'<th>{i}</th>' for i in range(1, 10))
-            + '<th class="divider">R</th><th>H</th><th>E</th>'
+            + "".join(f'<th>{i}</th>' for i in range(1, F5_LEN + 1))
+            + '<th class="divider">F5</th>'
             '</tr></thead><tbody>'
             f'<tr><td class="team">{_esc(away_lab)}</td>{cells_a}'
-            f'<td class="tot divider">-</td><td class="tot-h">-</td><td class="tot-e">-</td></tr>'
+            f'<td class="tot divider">{a_tot}</td></tr>'
             f'<tr><td class="team">{_esc(home_lab)}</td>{cells_h}'
-            f'<td class="tot divider">-</td><td class="tot-h">-</td><td class="tot-e">-</td></tr>'
+            f'<td class="tot divider">{h_tot}</td></tr>'
             '</tbody></table>'
             '<div class="gc-inning-marker">'
-            '<div class="gc-inning-lab">Inning</div>'
+            '<div class="gc-inning-lab">F5</div>'
             '<div class="gc-inning-val">Pre</div>'
             '<div class="gc-diamond"></div>'
             '</div></div>'
         )
 
-    inn_a = inn["innings_away_runs"]
-    inn_h = inn["innings_home_runs"]
-    a_R = inn["away_R"]; h_R = inn["home_R"]
-    a_H = inn["away_H"]; h_H = inn["home_H"]
-    a_E = inn["away_E"]; h_E = inn["home_E"]
+    inn_a_full = inn.get("innings_away_runs") or []
+    inn_h_full = inn.get("innings_home_runs") or []
+    inn_a = list(inn_a_full[:F5_LEN]) + [None] * max(0, F5_LEN - len(inn_a_full))
+    inn_h = list(inn_h_full[:F5_LEN]) + [None] * max(0, F5_LEN - len(inn_h_full))
+
+    def _sum_safe(vals: List[Optional[int]]) -> int:
+        return sum(int(v) for v in vals if v is not None)
+
+    a_f5 = sm_game.get("away_f5")
+    h_f5 = sm_game.get("home_f5")
+    a_R = int(a_f5) if a_f5 not in (None, "") else _sum_safe(inn_a)
+    h_R = int(h_f5) if h_f5 not in (None, "") else _sum_safe(inn_h)
+
     cur = inn.get("current_inning")
     state = (inn.get("inning_state") or "").lower()
     is_final = bool(inn.get("is_final"))
+    phase = _phase_from_inn(inn)
+    f5_complete = bool(sm_game.get("can_grade")) or (cur is not None and int(cur) > 5)
 
     def _cell(val: Optional[int]) -> str:
         if val is None:
@@ -1286,28 +1300,30 @@ def _render_linescore_html(
     cells_a = "".join(_cell(v) for v in inn_a)
     cells_h = "".join(_cell(v) for v in inn_h)
 
-    if is_final:
-        marker_label = "Final"
+    if phase == "pre":
+        marker_label = "Pre"
+    elif is_final or f5_complete:
+        marker_label = "F5 Final"
     elif cur is not None:
         prefix = {"top": "Top", "middle": "Mid", "bottom": "Bot", "end": "End"}.get(state, "")
-        marker_label = f"{prefix} {cur}".strip()
+        marker_label = f"{prefix} {min(int(cur), 5)}".strip()
     else:
-        marker_label = "Live"
+        marker_label = "Pre"
 
     return (
         '<div class="gc-line-wrap">'
         '<table class="gc-line-table"><thead><tr>'
         '<th class="team">&nbsp;</th>'
-        + "".join(f'<th>{i}</th>' for i in range(1, 10))
-        + '<th class="divider">R</th><th>H</th><th>E</th>'
+        + "".join(f'<th>{i}</th>' for i in range(1, F5_LEN + 1))
+        + '<th class="divider">F5</th>'
         '</tr></thead><tbody>'
         f'<tr><td class="team">{_esc(away_lab)}</td>{cells_a}'
-        f'<td class="tot divider">{a_R}</td><td class="tot-h">{a_H}</td><td class="tot-e">{a_E}</td></tr>'
+        f'<td class="tot divider">{a_R}</td></tr>'
         f'<tr><td class="team">{_esc(home_lab)}</td>{cells_h}'
-        f'<td class="tot divider">{h_R}</td><td class="tot-h">{h_H}</td><td class="tot-e">{h_E}</td></tr>'
+        f'<td class="tot divider">{h_R}</td></tr>'
         '</tbody></table>'
         '<div class="gc-inning-marker">'
-        '<div class="gc-inning-lab">Inning</div>'
+        '<div class="gc-inning-lab">F5</div>'
         f'<div class="gc-inning-val">{_esc(marker_label)}</div>'
         '<div class="gc-diamond"></div>'
         '</div></div>'
@@ -1333,16 +1349,6 @@ def _render_metrics_strip(row: pd.Series) -> str:
 
 
 def _prob_to_american_odds(prob: float) -> str:
-    """Convert win probability (0-100) to implied American odds."""
-    p = max(0.01, min(99.99, float(prob))) / 100.0
-    if p >= 0.5:
-        odds = -int(round((p / (1.0 - p)) * 100.0))
-    else:
-        odds = int(round(((1.0 - p) / p) * 100.0))
-    return f"{odds:+d}"
-
-
-def _prob_to_american_odds(prob: float) -> str:
     """Convert probability percentage (0-100) to implied American odds."""
     p = max(0.01, min(99.99, float(prob))) / 100.0
     if p >= 0.5:
@@ -1359,7 +1365,7 @@ def _render_prob_card(prob: float, trend: str, color: str) -> str:
     return (
         '<div class="gc-prob-card">'
         '<div class="gc-prob-lab">Live Hit Probability</div>'
-        f'<div class="gc-prob-big" style="color:{color};">{prob:.1f}% <span style="font-size:0.52em;opacity:0.95;">· {implied_odds}</span></div>'
+        f'<div class="gc-prob-big" style="color:{color};">{prob:.1f}% · {implied_odds}</div>'
         f'<div class="gc-prob-trend {cls}">{_esc(trend)} <span style="opacity:0.7;">↗</span></div>'
         f'<div class="gc-prob-bar"><div class="gc-prob-bar-fill" style="width:{fill:.1f}%; background: linear-gradient(90deg, {color}, {color}cc);"></div></div>'
         '</div>'
@@ -1897,7 +1903,7 @@ def render_gamecast_mini_list(
         implied_odds = _prob_to_american_odds(prob)
         prob_html = (
             '<div class="gc-mini-prob-col">'
-            f'<div class="gc-mini-prob {prob_cls}" style="color:{color};">{prob:.0f}% <span style="font-size:0.68em;opacity:0.95;">· {implied_odds}</span></div>'
+            f'<div class="gc-mini-prob {prob_cls}" style="color:{color};">{prob:.0f}% · {implied_odds}</div>'
             f'<div class="gc-mini-prob-bar"><div class="gc-mini-prob-fill" style="width:{max(0.0, min(100.0, prob)):.0f}%; background:linear-gradient(90deg, {color}, {color}aa);"></div></div>'
             f'<div class="gc-mini-prob-trend">{_esc(trend)}</div>'
             '</div>'
