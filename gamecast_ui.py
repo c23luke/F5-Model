@@ -140,6 +140,51 @@ def _tier_class_suffix(tier: str) -> str:
     }.get(str(tier).upper(), "core")
 
 
+# Pre-game keywords from MLB Stats API detailedState. These all mean the game
+# has NOT started yet (even if currentInning is reported as 1 by the API).
+_PRE_GAME_STATUS_KEYWORDS = (
+    "scheduled",
+    "pre-game",
+    "pregame",
+    "warmup",
+    "delayed start",
+    "postponed",
+)
+
+
+def _phase_from_inn(inn_data: Optional[Dict[str, Any]]) -> str:
+    """Return one of 'pre' | 'live' | 'final' from an innings_map entry.
+
+    The MLB Stats API will sometimes report `currentInning: 1` for a game whose
+    detailedState is still 'Scheduled'/'Pre-Game'/'Warmup'. Trusting
+    currentInning alone produces a phantom 'Live' label hours before first
+    pitch — so we always check status first.
+    """
+    if not inn_data:
+        return "pre"
+    if inn_data.get("is_final"):
+        return "final"
+    status_l = str(inn_data.get("status") or "").lower()
+    if any(k in status_l for k in _PRE_GAME_STATUS_KEYWORDS):
+        return "pre"
+    if "in progress" in status_l or "manager challenge" in status_l or "umpire review" in status_l:
+        return "live"
+    cur = inn_data.get("current_inning")
+    if cur and int(cur) >= 1:
+        # current_inning alone is not enough — but if status is unknown and we
+        # have any innings runs reported, treat as live.
+        runs_a = inn_data.get("innings_away_runs") or []
+        runs_h = inn_data.get("innings_home_runs") or []
+        any_runs_seen = any(r is not None for r in list(runs_a)[:max(1, int(cur))]) or any(
+            r is not None for r in list(runs_h)[:max(1, int(cur))]
+        )
+        away_R = inn_data.get("away_R", 0) or 0
+        home_R = inn_data.get("home_R", 0) or 0
+        if any_runs_seen or away_R or home_R:
+            return "live"
+    return "pre"
+
+
 # =============================================================================
 # Data fetch — innings array (separate cache, doesn't disturb fetch_scores_for_date)
 # =============================================================================
@@ -1209,13 +1254,14 @@ def _render_status_bar(
     else:
         ticket_word = "OPEN"
 
-    if inn_data and not inn_data.get("is_final"):
-        cur = inn_data.get("current_inning") or 0
-        state = (inn_data.get("inning_state") or "").lower()
+    phase_kind = _phase_from_inn(inn_data)
+    if phase_kind == "final":
+        phase = "Final"
+    elif phase_kind == "live":
+        cur = (inn_data or {}).get("current_inning") or 0
+        state = ((inn_data or {}).get("inning_state") or "").lower()
         prefix = {"top": "Top", "middle": "Mid", "bottom": "Bot", "end": "End"}.get(state, "")
         phase = f"{prefix} {cur}".strip() if cur else "Live"
-    elif inn_data and inn_data.get("is_final"):
-        phase = "Final"
     else:
         phase = "Pre"
 
@@ -1292,6 +1338,50 @@ def _render_key_reasons_card(reasons: List[str]) -> str:
         'Key Reasons'
         '</div>'
         f'{items}'
+        '</div>'
+    )
+
+
+def evaluate_f5_criteria(row: pd.Series, intel: Dict[str, Any]) -> List[Tuple[str, bool]]:
+    """
+    Build a compact checklist for quick qualification context in the side panel.
+    Uses available row/intel fields only (safe fallback when values are missing).
+    """
+    conf = float(row.get("Avg Confidence", 0.0) or 0.0)
+    sample = float(row.get("Avg Sample", 0.0) or 0.0)
+    models = int(row.get("Models On Bet", 0) or 0)
+    era_gap = float(intel.get("era_gap", 0.0) or 0.0)
+    k_diff = float(intel.get("k_diff", 0.0) or 0.0)
+
+    return [
+        ("Confidence >= 70%", conf >= 70.0),
+        ("Sample >= 0.45", sample >= 0.45),
+        ("Models aligned >= 2", models >= 2),
+        ("ERA gap positive", era_gap > 0.0),
+        ("K edge positive", k_diff > 0.0),
+    ]
+
+
+def _render_f5_criteria_card(criteria: List[Tuple[str, bool]]) -> str:
+    if not criteria:
+        return ""
+    rows = ""
+    for label, ok in criteria:
+        mark = "✓" if ok else "•"
+        cls = "color:var(--gc-emerald);" if ok else "color:var(--gc-text-3);"
+        rows += (
+            '<div class="gc-key-item">'
+            f'<span class="gc-key-item-icon" style="{cls}">{_esc(mark)}</span>'
+            f'<span>{_esc(label)}</span>'
+            '</div>'
+        )
+    return (
+        '<div class="gc-side-card">'
+        '<div class="gc-side-head">'
+        '<span class="gc-side-icon" style="background:rgba(16,185,129,0.14);color:var(--gc-emerald);">✓</span>'
+        'F5 Criteria'
+        '</div>'
+        f'{rows}'
         '</div>'
     )
 
@@ -1407,12 +1497,15 @@ def render_gamecast_hero(
     slip_html = _render_bet_slip(row)
     keys_html = _render_key_reasons_card(keys)
     track_html = _render_tracking_card(row, tracker_df)
+    criteria = evaluate_f5_criteria(row, intel)
+    criteria_html = _render_f5_criteria_card(criteria)
 
-    # Header strip — LIVE pill if there's an inning in progress, otherwise Pre
-    is_live = bool(inn_data and not inn_data.get("is_final") and inn_data.get("current_inning"))
+    # Header strip — LIVE pill only when the game is actually in progress.
+    phase = _phase_from_inn(inn_data)
     head_pill = (
-        '<span class="gc-live-pill">LIVE</span>'
-        if is_live else ""
+        '<span class="gc-live-pill">LIVE</span>' if phase == "live"
+        else ('<span class="gc-live-pill" style="background:rgba(148,163,184,0.18);color:#94a3b8;">FINAL</span>' if phase == "final"
+              else '<span class="gc-live-pill" style="background:rgba(148,163,184,0.18);color:#94a3b8;">PRE</span>')
     )
 
     main_html = (
@@ -1431,6 +1524,7 @@ def render_gamecast_hero(
 
     side_html = (
         '<div class="gc-side">'
+        f'{criteria_html}'
         f'{slip_html}'
         f'{keys_html}'
         f'{track_html}'
@@ -1494,9 +1588,15 @@ def render_gamecast_card(
     slip_html = _render_bet_slip(row)
     keys_html = _render_key_reasons_card(keys)
     track_html = _render_tracking_card(row, tracker_df)
+    criteria = evaluate_f5_criteria(row, intel)
+    criteria_html = _render_f5_criteria_card(criteria)
 
-    is_live = bool(inn_data and not inn_data.get("is_final") and inn_data.get("current_inning"))
-    head_pill = '<span class="gc-live-pill">LIVE</span>' if is_live else ""
+    phase = _phase_from_inn(inn_data)
+    head_pill = (
+        '<span class="gc-live-pill">LIVE</span>' if phase == "live"
+        else ('<span class="gc-live-pill" style="background:rgba(148,163,184,0.18);color:#94a3b8;">FINAL</span>' if phase == "final"
+              else '<span class="gc-live-pill" style="background:rgba(148,163,184,0.18);color:#94a3b8;">PRE</span>')
+    )
     rank_html = f'<span class="gc-tier-pill" style="opacity:0.85;">#{int(rank)}</span>' if rank is not None else ""
 
     main_html = (
@@ -1515,6 +1615,7 @@ def render_gamecast_card(
 
     side_html = (
         '<div class="gc-side">'
+        f'{criteria_html}'
         f'{slip_html}'
         f'{keys_html}'
         f'{track_html}'
