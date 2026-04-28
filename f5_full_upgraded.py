@@ -5504,16 +5504,27 @@ def rerank_best_bets_by_criteria(
 ) -> pd.DataFrame:
     """Re-rank the unified best-bets list using the F5 strategy criteria first.
 
-    Sort priority:
-      1. main criteria passed (out of 4: ERA gap, target ERA, opp ERA, K edge)
-      2. bonus criterion passed (opponent in slump)  -- tie-breaker
-      3. avg confidence    -- so a 90% pick beats an 80% pick
-      4. tier rank         -- 100% LOCK > CORE > SHARP > VALUE > BT-ONLY
-      5. consensus / EV / models  -- usual fallback chain
+    Sort priority (in order — earlier keys dominate):
+      1. main criteria passed     -- count of the 4 hard F5 requirements
+                                     (Confidence>=70, Sample>=0.45,
+                                     Models>=2, ERA gap positive). A pick
+                                     failing one of these can never outrank
+                                     a pick that cleared all 4.
+      2. avg confidence            -- a 98% pick beats a 71% pick. This is
+                                     the user-facing strength signal.
+      3. models on bet             -- 7 systems converging beats 4.
+      4. consensus score           -- raw model agreement signal.
+      5. bonus criterion (K edge)  -- only a tie-break. Two strong picks
+                                     where one has K edge pulls it ahead.
+      6. tier rank                 -- 100% LOCK > CORE > SHARP > VALUE.
+      7. EV                        -- finally, expected value when odds exist.
 
-    The Lock-of-the-Day is row 0 of the returned df. This stops the bug where
-    a low-confidence "100% LOCK" picked by 3 systems outranked a higher-
-    confidence pick that cleared every F5 criterion.
+    Why this order: when both picks pass the 4 hard F5 requirements, the
+    Lock of the Day must reflect what the user sees on the card -- higher
+    confidence + more models. The previous sort placed `_bonus_pass`
+    (K edge) above confidence, which let a 71%/4-model pick (with K edge)
+    outrank a 98%/7-model pick (without K edge). That's the bug we're
+    fixing now.
     """
     if df is None or df.empty:
         return df
@@ -5528,7 +5539,7 @@ def rerank_best_bets_by_criteria(
             criteria = evaluate_f5_criteria(r, intel)
         except Exception:
             criteria = []
-        # First 4 are the hard requirements, 5th is the slump bonus.
+        # First 4 are the hard requirements, 5th (K edge) is a tie-break only.
         m = sum(1 for c in criteria[:4] if len(c) >= 2 and bool(c[1]))
         b = 1 if (len(criteria) >= 5 and len(criteria[4]) >= 2 and bool(criteria[4][1])) else 0
         main_pass.append(m)
@@ -5539,12 +5550,38 @@ def rerank_best_bets_by_criteria(
     # Treat NaN EV as -inf so picks without odds don't artificially win the
     # tie-breaker over picks with real +EV numbers.
     out["_ev_sort"] = pd.to_numeric(out.get("EV"), errors="coerce").fillna(-1e9)
+    # Normalize the strength fields the UI displays, so the sort uses the
+    # exact same numbers shown on the card (no display/sort mismatch).
+    out["_conf_sort"] = pd.to_numeric(out.get("Avg Confidence"), errors="coerce")
+    out["_conf_sort"] = out["_conf_sort"].fillna(
+        pd.to_numeric(out.get("Confidence"), errors="coerce")
+    ).fillna(0.0)
+    out["_models_sort"] = pd.to_numeric(out.get("Models On Bet"), errors="coerce")
+    out["_models_sort"] = out["_models_sort"].fillna(
+        pd.to_numeric(out.get("Sharp Model Count"), errors="coerce")
+    ).fillna(
+        pd.to_numeric(out.get("Model Count"), errors="coerce")
+    ).fillna(0)
+    out["_consensus_sort"] = pd.to_numeric(out.get("Consensus Score"), errors="coerce")
+    out["_consensus_sort"] = out["_consensus_sort"].fillna(
+        pd.to_numeric(out.get("Priority Score"), errors="coerce")
+    ).fillna(0.0)
 
     out = out.sort_values(
-        by=["_main_pass", "_bonus_pass", "Avg Confidence", "_tier_rank",
-            "Consensus Score", "_ev_sort", "Models On Bet"],
+        by=[
+            "_main_pass",       # 1. all 4 hard criteria first
+            "_conf_sort",       # 2. confidence — the headline strength signal
+            "_models_sort",     # 3. number of converging models
+            "_consensus_sort",  # 4. consensus score
+            "_bonus_pass",      # 5. K edge — tie-break, not trump card
+            "_tier_rank",       # 6. tier
+            "_ev_sort",         # 7. EV
+        ],
         ascending=[False, False, False, False, False, False, False],
-    ).drop(columns=["_main_pass", "_bonus_pass", "_tier_rank", "_ev_sort"]).reset_index(drop=True)
+    ).drop(columns=[
+        "_main_pass", "_bonus_pass", "_tier_rank", "_ev_sort",
+        "_conf_sort", "_models_sort", "_consensus_sort",
+    ]).reset_index(drop=True)
     return out
 
 
