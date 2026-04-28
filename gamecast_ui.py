@@ -108,6 +108,51 @@ def _short_team_label(full_name: str) -> str:
     return (nick if len(nick) <= 8 else nick[:8]).upper()
 
 
+def _team_abbr(full_name: str) -> str:
+    """MLB team abbreviation for compact mobile-friendly matchup labels."""
+    key = _canonical_team_key(full_name)
+    abbr_map = {
+        "arizonadiamondbacks": "ARI",
+        "atlantabraves": "ATL",
+        "baltimoreorioles": "BAL",
+        "bostonredsox": "BOS",
+        "chc": "CHC",
+        "cws": "CWS",
+        "cincinnatireds": "CIN",
+        "clevelandguardians": "CLE",
+        "coloradorockies": "COL",
+        "detroittigers": "DET",
+        "houstonastros": "HOU",
+        "kansascityroyals": "KC",
+        "losangelesangels": "LAA",
+        "losangelesdodgers": "LAD",
+        "miamimarlins": "MIA",
+        "milwaukeebrewers": "MIL",
+        "minnesotatwins": "MIN",
+        "newyorkmets": "NYM",
+        "newyorkyankees": "NYY",
+        "athletics": "OAK",
+        "philadelphiaphillies": "PHI",
+        "pittsburghpirates": "PIT",
+        "sandiegopadres": "SD",
+        "sanfranciscogiants": "SF",
+        "seattlemariners": "SEA",
+        "stlouiscardinals": "STL",
+        "tampabayrays": "TB",
+        "texasrangers": "TEX",
+        "torontobluejays": "TOR",
+        "washingtonnationals": "WSH",
+    }
+    return abbr_map.get(key, _short_team_label(full_name)[:3])
+
+
+def _abbr_matchup(matchup: str) -> str:
+    if " @ " not in str(matchup):
+        return str(matchup)
+    away, home = [s.strip() for s in str(matchup).split(" @ ", 1)]
+    return f"{_team_abbr(away)} @ {_team_abbr(home)}"
+
+
 def _ordinal(n: int) -> str:
     if 11 <= (n % 100) <= 13:
         suf = "th"
@@ -632,6 +677,27 @@ _GAMECAST_CSS = """
 }
 @media (max-width: 980px) {
     .gc-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+    .gc-card { padding: 12px 12px; border-radius: 14px; }
+    .gc-head-title { font-size: 0.95rem; }
+    .gc-sub { font-size: 0.74rem; margin-bottom: 8px; padding-bottom: 8px; }
+    .gc-topbar { flex-direction: column; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+    .gc-matchup { font-size: 1.05rem; line-height: 1.2; }
+    .gc-matchup-card { font-size: 0.98rem; }
+    .gc-pickline { font-size: 0.84rem; margin-top: 2px; }
+    .gc-metrics { width: 100%; border-left: none; border-top: 1px solid var(--gc-border); padding-top: 8px; }
+    .gc-metric { flex: 1; min-width: 0; padding: 0 8px; }
+    .gc-metric-val { font-size: 1.02rem; }
+    .gc-line-wrap { padding: 8px 8px; gap: 8px; grid-template-columns: 1fr; }
+    .gc-line-table th, .gc-line-table td { font-size: 0.68rem; padding: 4px 3px; }
+    .gc-line-table td.team { font-size: 0.72rem; padding-right: 8px; }
+    .gc-inning-marker { border-left: none; border-top: 1px solid var(--gc-border); padding-top: 8px; }
+    .gc-prob-big { font-size: 2rem; }
+    .gc-status { padding: 8px 10px; }
+    .gc-status-text { font-size: 0.74rem; }
+    .gc-side { gap: 8px; }
+    .gc-side-card { padding: 10px; }
 }
 
 .gc-main { min-width: 0; }
@@ -1512,7 +1578,7 @@ def render_gamecast_hero(
         f'<div class="gc-eyebrow">{_esc(eyebrow)}</div>'
         f'<div class="gc-topbar">'
         f'<div class="gc-topbar-meta">'
-        f'<div class="gc-matchup">{_esc(matchup)}</div>'
+        f'<div class="gc-matchup">{_esc(_abbr_matchup(matchup))}</div>'
         f'<div class="gc-pickline">Pick: <b>{_esc(pick)}</b></div>'
         f'</div>'
         f'{metrics_html}'
@@ -1603,7 +1669,7 @@ def render_gamecast_card(
         f'<div class="gc-eyebrow">{_esc(eyebrow)}</div>'
         f'<div class="gc-topbar">'
         f'<div class="gc-topbar-meta">'
-        f'<div class="gc-matchup gc-matchup-card">{_esc(matchup)}</div>'
+        f'<div class="gc-matchup gc-matchup-card">{_esc(_abbr_matchup(matchup))}</div>'
         f'<div class="gc-pickline">Pick: <b>{_esc(pick)}</b></div>'
         f'</div>'
         f'{metrics_html}'
@@ -1768,7 +1834,7 @@ def render_gamecast_mini_list(
         )
         pick_col = (
             '<div class="gc-mini-pick-col">'
-            f'<div class="gc-mini-matchup">{_esc(matchup)}</div>'
+            f'<div class="gc-mini-matchup">{_esc(_abbr_matchup(matchup))}</div>'
             f'<div class="gc-mini-pick">Pick: <b>{_esc(pick)}</b></div>'
             f'<div class="gc-mini-meta">{meta_bits}</div>'
             '</div>'
