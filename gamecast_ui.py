@@ -355,7 +355,7 @@ def _hit_probability(
         return max(42.0, min(74.0, compressed))
 
     if " @ " not in matchup:
-        return _pregame_prob(base_confidence), "Pre-game", "#94a3b8"
+        return _pregame_prob(base_confidence), "Pre-game", "#10b981"
 
     away, home = [s.strip() for s in matchup.split(" @ ", 1)]
     key = f"{_canonical_team_key(away)}|{_canonical_team_key(home)}"
@@ -377,7 +377,7 @@ def _hit_probability(
         return 0.0, "Lost", "#f43f5e"
 
     if not game:
-        return _pregame_prob(base_confidence), "Pre-game", "#94a3b8"
+        return _pregame_prob(base_confidence), "Pre-game", "#10b981"
 
     # Treat scheduled/no-activity states as pre-game even when feeds expose
     # partial fields; avoids phantom live confidence spikes before first pitch.
@@ -388,7 +388,7 @@ def _hit_probability(
     no_score_activity = away_f5 == 0 and home_f5 == 0
     is_status_pregame = any(k in status_l for k in _PRE_GAME_STATUS_KEYWORDS)
     if is_status_pregame or (inning_now in (None, 0) and no_score_activity):
-        return _pregame_prob(base_confidence), "Pre-game", "#94a3b8"
+        return _pregame_prob(base_confidence), "Pre-game", "#10b981"
 
     af5 = away_f5
     hf5 = home_f5
