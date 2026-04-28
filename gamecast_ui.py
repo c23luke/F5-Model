@@ -153,6 +153,17 @@ def _abbr_matchup(matchup: str) -> str:
     return f"{_team_abbr(away)} @ {_team_abbr(home)}"
 
 
+def _responsive_matchup_html(matchup: str, extra_class: str = "") -> str:
+    """Full matchup on desktop, abbreviated matchup on mobile."""
+    cls = f"gc-matchup {extra_class}".strip()
+    return (
+        f'<div class="{_esc(cls)}">'
+        f'<span class="gc-matchup-full">{_esc(matchup)}</span>'
+        f'<span class="gc-matchup-abbr">{_esc(_abbr_matchup(matchup))}</span>'
+        '</div>'
+    )
+
+
 def _ordinal(n: int) -> str:
     if 11 <= (n % 100) <= 13:
         suf = "th"
@@ -698,6 +709,8 @@ _GAMECAST_CSS = """
     .gc-status-text { font-size: 0.74rem; }
     .gc-side { gap: 8px; }
     .gc-side-card { padding: 10px; }
+    .gc-matchup-full { display: none; }
+    .gc-matchup-abbr { display: inline; }
 }
 
 .gc-main { min-width: 0; }
@@ -712,6 +725,7 @@ _GAMECAST_CSS = """
     letter-spacing: -0.018em; line-height: 1.15;
 }
 .gc-matchup-card { font-size: 1.45rem; }
+.gc-matchup-abbr { display: none; }
 .gc-pickline {
     color: var(--gc-text-1); font-size: 0.95rem; margin-top: 6px; margin-bottom: 4px;
 }
@@ -1257,9 +1271,11 @@ def _render_linescore_html(
 
 
 def _render_metrics_strip(row: pd.Series) -> str:
-    models = int(row.get("Models On Bet", 0) or 0)
-    conf = float(row.get("Avg Confidence", 0.0) or 0.0)
-    sample = float(row.get("Avg Sample", 0.0) or 0.0)
+    models = int(
+        row.get("Models On Bet", row.get("Sharp Model Count", row.get("Model Count", 0))) or 0
+    )
+    conf = float(row.get("Avg Confidence", row.get("Confidence", 0.0)) or 0.0)
+    sample = float(row.get("Avg Sample", row.get("Sample Reliability", 0.0)) or 0.0)
     return (
         '<div class="gc-metrics">'
         f'<div class="gc-metric"><div class="gc-metric-lab">Models</div>'
@@ -1291,7 +1307,7 @@ def _render_why_card(reasons: List[str]) -> str:
     )
     return (
         '<div class="gc-why">'
-        '<div class="gc-why-lab">Why so high?</div>'
+        '<div class="gc-why-lab">Why this side?</div>'
         f'<ul class="gc-why-list">{items}</ul>'
         '</div>'
     )
@@ -1546,8 +1562,14 @@ def render_gamecast_hero(
     pick_team = re.sub(r"\bF5\s*", "", pick, flags=re.I).strip()
     intel = (matchup_intel or {}).get(matchup) or {}
 
-    # Probability + ticket
-    base_conf = float(row.get("Avg Confidence", 0.0) or 0.0)
+    # Probability + ticket. Fallback confidence prevents nonsense ultra-low live
+    # probabilities on cards that don't carry consensus fields.
+    base_conf = float(row.get("Avg Confidence", row.get("Confidence", 0.0)) or 0.0)
+    models_for_prob = int(
+        row.get("Models On Bet", row.get("Sharp Model Count", row.get("Model Count", 0))) or 0
+    )
+    if base_conf <= 0:
+        base_conf = 55.0 if models_for_prob <= 0 else 50.0
     prob, trend, color = _hit_probability(matchup, pick, base_conf, score_map)
     ticket = _ticket_status_for(row, tracker_df)
     inn_data = _innings_for_matchup(matchup, innings_map)
@@ -1578,7 +1600,7 @@ def render_gamecast_hero(
         f'<div class="gc-eyebrow">{_esc(eyebrow)}</div>'
         f'<div class="gc-topbar">'
         f'<div class="gc-topbar-meta">'
-        f'<div class="gc-matchup">{_esc(_abbr_matchup(matchup))}</div>'
+        f'{_responsive_matchup_html(matchup)}'
         f'<div class="gc-pickline">Pick: <b>{_esc(pick)}</b></div>'
         f'</div>'
         f'{metrics_html}'
@@ -1638,7 +1660,12 @@ def render_gamecast_card(
     pick_team = re.sub(r"\bF5\s*", "", pick, flags=re.I).strip()
     intel = (matchup_intel or {}).get(matchup) or {}
 
-    base_conf = float(row.get("Avg Confidence", 0.0) or 0.0)
+    base_conf = float(row.get("Avg Confidence", row.get("Confidence", 0.0)) or 0.0)
+    models_for_prob = int(
+        row.get("Models On Bet", row.get("Sharp Model Count", row.get("Model Count", 0))) or 0
+    )
+    if base_conf <= 0:
+        base_conf = 55.0 if models_for_prob <= 0 else 50.0
     prob, trend, color = _hit_probability(matchup, pick, base_conf, score_map)
     ticket = _ticket_status_for(row, tracker_df)
     inn_data = _innings_for_matchup(matchup, innings_map)
@@ -1669,7 +1696,7 @@ def render_gamecast_card(
         f'<div class="gc-eyebrow">{_esc(eyebrow)}</div>'
         f'<div class="gc-topbar">'
         f'<div class="gc-topbar-meta">'
-        f'<div class="gc-matchup gc-matchup-card">{_esc(_abbr_matchup(matchup))}</div>'
+        f'{_responsive_matchup_html(matchup, "gc-matchup-card")}'
         f'<div class="gc-pickline">Pick: <b>{_esc(pick)}</b></div>'
         f'</div>'
         f'{metrics_html}'
@@ -1739,7 +1766,12 @@ def render_gamecast_mini_list(
         matchup = str(row.get("Matchup", ""))
         pick = str(row.get("Suggested F5 Pick", ""))
 
-        base_conf = float(row.get("Avg Confidence", 0.0) or 0.0)
+        base_conf = float(row.get("Avg Confidence", row.get("Confidence", 0.0)) or 0.0)
+        models_for_prob = int(
+            row.get("Models On Bet", row.get("Sharp Model Count", row.get("Model Count", 0))) or 0
+        )
+        if base_conf <= 0:
+            base_conf = 55.0 if models_for_prob <= 0 else 50.0
         prob, trend, color = _hit_probability(matchup, pick, base_conf, score_map)
         ticket = _ticket_status_for(row, tracker_df)
         inn_data = _innings_for_matchup(matchup, innings_map)
@@ -1834,7 +1866,7 @@ def render_gamecast_mini_list(
         )
         pick_col = (
             '<div class="gc-mini-pick-col">'
-            f'<div class="gc-mini-matchup">{_esc(_abbr_matchup(matchup))}</div>'
+            f'<div class="gc-mini-matchup"><span class="gc-matchup-full">{_esc(matchup)}</span><span class="gc-matchup-abbr">{_esc(_abbr_matchup(matchup))}</span></div>'
             f'<div class="gc-mini-pick">Pick: <b>{_esc(pick)}</b></div>'
             f'<div class="gc-mini-meta">{meta_bits}</div>'
             '</div>'
