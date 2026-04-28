@@ -3897,6 +3897,64 @@ def render_premium_theme() -> None:
             .sa-bb-card { grid-template-columns: 1fr; }
             .sa-bb-right { align-items: flex-start; }
         }
+        @media (max-width: 600px) {
+            .sa-slip-card, .sa-feature-pick-card {
+                padding: 10px 11px !important;
+                border-radius: 10px !important;
+                margin-bottom: 8px !important;
+            }
+            .sa-slip-card-top {
+                align-items: center !important;
+                gap: 6px !important;
+                margin-bottom: 4px !important;
+            }
+            .sa-slip-pick-lbl { display: none !important; }
+            .sa-slip-pick {
+                font-size: 1.08rem !important;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                max-width: 100%;
+            }
+            .sa-ticket {
+                min-width: 32px !important;
+                padding: 3px 7px !important;
+                font-size: 0.68rem !important;
+                flex-shrink: 0;
+            }
+            .sa-slip-scorebox {
+                padding: 7px 8px !important;
+                border-radius: 9px !important;
+                margin-bottom: 5px !important;
+            }
+            .sa-slip-over { font-size: 0.58rem !important; }
+            .sa-slip-pair-row .big, .sa-slip-score-line .big {
+                font-size: 1.75rem !important;
+                letter-spacing: -0.04em !important;
+            }
+            .sa-slip-scorehdr-min { display: none !important; }
+            .sa-slip-meta {
+                flex-wrap: nowrap !important;
+                overflow-x: auto !important;
+                gap: 4px !important;
+                scrollbar-width: none;
+            }
+            .sa-slip-meta::-webkit-scrollbar { display: none; }
+            .sa-pill {
+                padding: 2px 6px !important;
+                font-size: 0.58rem !important;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+            .sa-cc-duo { grid-template-columns: 1fr !important; }
+            .sa-mini-board {
+                width: 160px !important;
+                padding: 6px 8px !important;
+            }
+            .sa-mini-pair-row .n, .sa-mini-scores .n {
+                font-size: 1.35rem !important;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -4334,15 +4392,19 @@ def render_scoreboard_strip_from_slip(
             elif pl.get("away_s") is not None and pl.get("home_s") is not None:
                 a_s = pl["away_s"]
                 h_s = pl["home_s"]
+                a_win = a_s > h_s
+                h_win = h_s > a_s
+                a_col = "color:#4ade80;font-weight:900;" if a_win else ("color:#f87171;" if h_win else "")
+                h_col = "color:#4ade80;font-weight:900;" if h_win else ("color:#f87171;" if a_win else "")
                 mshort = html.escape(f"{short_team_label(pl['away'])} @ {short_team_label(pl['home'])}")
                 fg_one = html.escape(full_game_strip_caption(pl))
                 inner = (
                     f'<div class="sa-mini-board sa-score-ui {tone}">'
                     f'<div class="sa-mini-ticker-title">{mshort}</div>'
                     f'<div class="sa-mini-pair-row">'
-                    f'<div class="sa-mini-side"><span class="sa-mini-over">{away_nm}</span><span class="n">{a_s}</span></div>'
+                    f'<div class="sa-mini-side"><span class="sa-mini-over">{away_nm}</span><span class="n" style="{a_col}">{a_s}</span></div>'
                     f'<span class="dash">—</span>'
-                    f'<div class="sa-mini-side"><span class="sa-mini-over">{home_nm}</span><span class="n">{h_s}</span></div>'
+                    f'<div class="sa-mini-side"><span class="sa-mini-over">{home_nm}</span><span class="n" style="{h_col}">{h_s}</span></div>'
                     f"</div>"
                     f'<div class="sa-mini-fg-inline">{fg_one}</div>'
                     f"</div>"
@@ -4395,6 +4457,10 @@ def render_betslip_cards_html(df: pd.DataFrame, score_map: Dict[str, Dict[str, A
         if pl and pl.get("away_s") is not None and pl.get("home_s") is not None:
             a_s = pl["away_s"]
             h_s = pl["home_s"]
+            a_win = a_s > h_s
+            h_win = h_s > a_s
+            a_col = "color:#4ade80;font-weight:900;" if a_win else ("color:#f87171;" if h_win else "")
+            h_col = "color:#4ade80;font-weight:900;" if h_win else ("color:#f87171;" if a_win else "")
             fg_min = render_full_game_minimal_html(pl)
             away_lab = esc_html_one_line(short_team_label(pl["away"]))
             home_lab = esc_html_one_line(short_team_label(pl["home"]))
@@ -4403,10 +4469,10 @@ def render_betslip_cards_html(df: pd.DataFrame, score_map: Dict[str, Dict[str, A
                 f'<div class="sa-slip-scorehdr-min">F5 · innings 1–5</div>'
                 f'<div class="sa-slip-pair-row">'
                 f'<div class="sa-slip-side"><span class="sa-slip-over">{away_lab}</span>'
-                f'<span class="big">{a_s}</span></div>'
+                f'<span class="big" style="{a_col}">{a_s}</span></div>'
                 f'<span class="sep">—</span>'
                 f'<div class="sa-slip-side"><span class="sa-slip-over">{home_lab}</span>'
-                f'<span class="big">{h_s}</span></div>'
+                f'<span class="big" style="{h_col}">{h_s}</span></div>'
                 f"</div>"
                 f"{fg_min}"
                 f'<div class="sa-slip-matchup-micro">{matchup}</div></div>'
@@ -4428,13 +4494,13 @@ def render_betslip_cards_html(df: pd.DataFrame, score_map: Dict[str, Dict[str, A
         blocks.append(
             f'<div class="sa-slip-card {tone}">'
             f'<div class="sa-slip-card-top">'
-            f'<div><div class="sa-slip-pick-lbl">Pick</div>'
+            f'<div style="min-width:0;flex:1;"><div class="sa-slip-pick-lbl">Pick</div>'
             f'<div class="sa-slip-pick">{pick}</div></div>'
-            f'<span class="sa-ticket {ticket}">{ticket}</span></div>'
+            f'<span class="sa-ticket {ticket}" style="flex-shrink:0;">{ticket}</span></div>'
             f"{score_inner}"
             f'<div class="sa-slip-meta">'
-            f'<span class="sa-pill">Conf {conf_s}</span>'
-            f'<span class="sa-pill">Sample {samp_s}</span>'
+            f'<span class="sa-pill">Target {conf_s}</span>'
+            f'<span class="sa-pill">Trend {samp_s}</span>'
             f'<span class="sa-pill">{tags}</span></div></div>'
         )
 
@@ -4467,6 +4533,10 @@ def render_featured_pick_cards_html(
         if pl and pl.get("away_s") is not None and pl.get("home_s") is not None:
             a_s = pl["away_s"]
             h_s = pl["home_s"]
+            a_win = a_s > h_s
+            h_win = h_s > a_s
+            a_col = "color:#4ade80;font-weight:900;" if a_win else ("color:#f87171;" if h_win else "")
+            h_col = "color:#4ade80;font-weight:900;" if h_win else ("color:#f87171;" if a_win else "")
             fg_min = render_full_game_minimal_html(pl)
             away_lab = esc_html_one_line(short_team_label(pl["away"]))
             home_lab = esc_html_one_line(short_team_label(pl["home"]))
@@ -4475,10 +4545,10 @@ def render_featured_pick_cards_html(
                 f'<div class="sa-slip-scorehdr-min">F5 · innings 1–5</div>'
                 f'<div class="sa-slip-pair-row">'
                 f'<div class="sa-slip-side"><span class="sa-slip-over">{away_lab}</span>'
-                f'<span class="big">{a_s}</span></div>'
+                f'<span class="big" style="{a_col}">{a_s}</span></div>'
                 f'<span class="sep">—</span>'
                 f'<div class="sa-slip-side"><span class="sa-slip-over">{home_lab}</span>'
-                f'<span class="big">{h_s}</span></div>'
+                f'<span class="big" style="{h_col}">{h_s}</span></div>'
                 f"</div>"
                 f"{fg_min}"
                 f'<div class="sa-slip-matchup-micro">{matchup}</div></div>'
@@ -4501,14 +4571,14 @@ def render_featured_pick_cards_html(
             (
                 f'<div class="sa-feature-pick-card {tone}">'
                 f'<div class="sa-slip-card-top">'
-                f'<div><div class="sa-slip-pick-lbl">Pick</div>'
+                f'<div style="min-width:0;flex:1;"><div class="sa-slip-pick-lbl">Pick</div>'
                 f'<div class="sa-slip-pick">{pick}</div></div>'
-                f'<span class="sa-ticket {ticket}">{esc_html_one_line(ticket_raw)}</span></div>'
+                f'<span class="sa-ticket {ticket}" style="flex-shrink:0;">{esc_html_one_line(ticket_raw)}</span></div>'
                 f"{score_inner}"
                 f'<div class="sa-slip-meta">'
                 f'<span class="sa-pill">{board_esc}</span>'
-                f'<span class="sa-pill">Conf {conf_s}</span>'
-                f'<span class="sa-pill">Sample {samp_s}</span>'
+                f'<span class="sa-pill">Target {conf_s}</span>'
+                f'<span class="sa-pill">Trend {samp_s}</span>'
                 f'<span class="sa-pill">Same game tone as slip</span></div></div>'
             )
             .replace("\n", " ")
@@ -5867,7 +5937,8 @@ def main() -> None:
     render_premium_theme()
     render_gamecast_theme()
     st.markdown(
-        '<div class="main-title sa-app-title">STACKED ANALYTICS · F5</div>',
+        '<div class="main-title sa-app-title">STACKED ANALYTICS · F5</div>'
+        '<div class="sa-app-sub" style="margin-top:-0.2rem;margin-bottom:0.8rem;">Version 3</div>',
         unsafe_allow_html=True,
     )
 

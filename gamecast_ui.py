@@ -108,6 +108,14 @@ def _short_team_label(full_name: str) -> str:
     return (nick if len(nick) <= 8 else nick[:8]).upper()
 
 
+def _compact_matchup_label(matchup: str) -> str:
+    """Phone-safe matchup label that cannot collapse into a vertical word stack."""
+    if " @ " not in str(matchup):
+        return " ".join(str(matchup).split())
+    away, home = [s.strip() for s in str(matchup).split(" @ ", 1)]
+    return f"{_short_team_label(away)} @ {_short_team_label(home)}"
+
+
 def _ordinal(n: int) -> str:
     if 11 <= (n % 100) <= 13:
         suf = "th"
@@ -599,8 +607,11 @@ _GAMECAST_CSS = """
 .gc-matchup {
     font-size: 1.85rem; font-weight: 800; color: var(--gc-text-0);
     letter-spacing: -0.018em; line-height: 1.15;
+    overflow-wrap: normal;
+    word-break: normal;
 }
 .gc-matchup-card { font-size: 1.45rem; }
+.gc-matchup-mobile { display: none; }
 .gc-pickline {
     color: var(--gc-text-1); font-size: 0.95rem; margin-top: 6px; margin-bottom: 4px;
 }
@@ -611,7 +622,7 @@ _GAMECAST_CSS = """
     display: flex; align-items: flex-start; justify-content: space-between;
     gap: 18px; margin: 4px 0 14px 0;
 }
-.gc-topbar-meta { flex: 1; min-width: 0; }
+.gc-topbar-meta { flex: 1 1 auto; min-width: min(280px, 100%); }
 .gc-metrics {
     display: flex; gap: 0; align-items: stretch;
     border-left: 1px solid var(--gc-border);
@@ -644,6 +655,77 @@ _GAMECAST_CSS = """
     grid-template-columns: 1fr auto;
     gap: 14px;
     align-items: center;
+}
+.gc-line-main { min-width: 0; }
+.gc-scoreboard-top {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.gc-score-team {
+    min-width: 0;
+    flex: 1 1 0;
+    display: grid;
+    gap: 6px;
+    justify-items: center;
+}
+.gc-score-logo {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background:
+        radial-gradient(circle at 35% 25%, rgba(255,255,255,0.16), transparent 42%),
+        linear-gradient(145deg, rgba(30,41,59,0.88), rgba(2,6,23,0.92));
+    border: 1px solid rgba(148,163,184,0.30);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 24px rgba(0,0,0,0.30);
+    color: var(--gc-text-0);
+    font-weight: 1000;
+    letter-spacing: -0.06em;
+    font-size: 1.42rem;
+}
+.gc-score-team-name {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--gc-text-1);
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+}
+.gc-score-num {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--gc-text-0);
+    font-size: 2.35rem;
+    font-weight: 1000;
+    line-height: 0.95;
+    letter-spacing: -0.07em;
+}
+.gc-score-center {
+    min-width: 82px;
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    color: var(--gc-text-2);
+}
+.gc-score-phase {
+    color: var(--gc-emerald);
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+}
+.gc-score-count {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--gc-text-2);
+    white-space: nowrap;
 }
 .gc-line-table {
     width: 100%;
@@ -1014,6 +1096,229 @@ _GAMECAST_CSS = """
     .gc-mini-line, .gc-mini-prob-col, .gc-mini-status-col { grid-column: 1 / -1; }
 }
 
+/* ============== Phone-first lock card polish ============== */
+@media (max-width: 980px) {
+    .gc-card {
+        border-radius: 16px;
+        padding: 14px 12px;
+        margin: 10px 0 12px;
+        box-shadow: 0 18px 44px rgba(0,0,0,0.36), inset 0 1px 0 rgba(255,255,255,0.045);
+    }
+    .gc-card::before { opacity: 0; }
+    .gc-card.tier-lock,
+    .gc-card.tier-core,
+    .gc-card.tier-sharp,
+    .gc-card.tier-value,
+    .gc-card.tier-btonly,
+    .gc-card.tier-featured {
+        border-left-width: 1px;
+    }
+    .gc-head {
+        justify-content: center;
+        margin-bottom: 0;
+    }
+    .gc-head-left {
+        width: 100%;
+        justify-content: space-between;
+        gap: 8px;
+    }
+    .gc-head-title {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 0.95rem;
+        white-space: nowrap;
+    }
+    .gc-tier-pill {
+        font-size: 0.55rem;
+        padding: 4px 8px;
+        letter-spacing: 0.08em;
+    }
+    .gc-sub { display: none; }
+    .gc-grid {
+        display: block;
+    }
+    .gc-main {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .gc-line-wrap {
+        order: 0;
+        display: block;
+        padding: 18px 12px 12px;
+        margin: 10px 0 0;
+        border-radius: 16px;
+        background:
+            radial-gradient(260px 160px at 100% 0%, rgba(56,189,248,0.10), transparent 66%),
+            linear-gradient(180deg, rgba(15,23,42,0.78), rgba(2,6,23,0.70));
+    }
+    .gc-scoreboard-top { display: flex; }
+    .gc-line-table th, .gc-line-table td {
+        padding: 5px 4px;
+        font-size: 0.70rem;
+    }
+    .gc-line-table th {
+        font-size: 0.56rem;
+    }
+    .gc-line-table td.team {
+        font-size: 0.70rem;
+        padding-right: 8px;
+    }
+    .gc-inning-marker { display: none; }
+    .gc-topbar {
+        order: 2;
+        display: block;
+        margin: 0;
+        padding: 16px 14px 12px;
+        border-radius: 14px;
+        border: 1px solid var(--gc-border);
+        background: rgba(2, 6, 23, 0.46);
+    }
+    .gc-eyebrow {
+        order: 2;
+        margin: 2px 4px -4px;
+        color: var(--gc-violet);
+        font-size: 0.62rem;
+    }
+    .gc-matchup,
+    .gc-matchup-card {
+        font-size: 1.02rem;
+        line-height: 1.2;
+        overflow-wrap: normal;
+        word-break: normal;
+    }
+    .gc-matchup-desktop { display: none; }
+    .gc-matchup-mobile {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .gc-pickline {
+        font-size: 0.82rem;
+        margin-top: 8px;
+    }
+    .gc-metrics {
+        margin-top: 16px;
+        width: 100%;
+        border-left: none;
+        border-top: 1px solid var(--gc-border);
+        padding-top: 12px;
+        justify-content: space-between;
+    }
+    .gc-metric {
+        flex: 1 1 0;
+        min-width: 0;
+        padding: 0 8px;
+    }
+    .gc-metric-lab { font-size: 0.55rem; }
+    .gc-metric-val { font-size: 1.05rem; }
+    .gc-prob-row {
+        order: 1;
+        display: block;
+        margin: 0;
+    }
+    .gc-prob-card {
+        position: relative;
+        overflow: hidden;
+        min-height: 104px;
+        border-radius: 14px;
+        padding: 14px 16px;
+        background:
+            radial-gradient(180px 80px at 88% 26%, rgba(110,231,183,0.28), transparent 60%),
+            linear-gradient(110deg, rgba(6,95,70,0.46), rgba(15,23,42,0.72)),
+            linear-gradient(0deg, rgba(17,94,89,0.34), rgba(17,94,89,0.34));
+    }
+    .gc-prob-card::after {
+        content: "";
+        position: absolute;
+        right: 20px;
+        top: 18px;
+        width: 152px;
+        height: 72px;
+        border-top: 2px solid rgba(134,239,172,0.88);
+        border-radius: 70% 100% 0 0;
+        transform: rotate(-18deg);
+        filter: drop-shadow(0 0 8px rgba(74,222,128,0.55));
+    }
+    .gc-prob-lab { font-size: 0.58rem; }
+    .gc-prob-big { font-size: 2.55rem; }
+    .gc-prob-bar { display: none; }
+    .gc-why { display: none; }
+    .gc-status {
+        order: 3;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        margin: 0;
+        padding: 12px 14px;
+        border-radius: 12px;
+    }
+    .gc-status-left,
+    .gc-status-right {
+        display: grid;
+        gap: 4px;
+        align-items: start;
+    }
+    .gc-status-right { justify-items: end; }
+    .gc-status-lab { font-size: 0.56rem; }
+    .gc-status-text { font-size: 0.78rem; }
+    .gc-status-right .gc-status-lab,
+    .gc-status-right .gc-status-text:first-child,
+    .gc-status-right .gc-status-text:last-child {
+        display: none;
+    }
+    .gc-side {
+        gap: 10px;
+        margin-top: 10px;
+    }
+    .gc-side-card {
+        border-radius: 14px;
+        padding: 14px;
+        background: rgba(2, 6, 23, 0.50);
+    }
+    .gc-side-card:has(.gc-slip-button) {
+        padding: 14px 12px;
+    }
+    .gc-side-head { font-size: 0.62rem; }
+    .gc-slip-row:first-of-type {
+        display: grid;
+        grid-template-columns: 1fr 82px;
+        gap: 10px;
+        align-items: stretch;
+    }
+    .gc-slip-odds-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 9px;
+        min-height: 54px;
+        background: linear-gradient(145deg, rgba(99,102,241,0.62), rgba(49,46,129,0.78));
+        color: #f8fafc;
+    }
+    .gc-slip-button {
+        margin-top: 14px;
+        padding: 15px 12px;
+        border-radius: 9px;
+        font-size: 0.84rem;
+        box-shadow: 0 0 24px rgba(99,102,241,0.28);
+    }
+    .gc-key-item { font-size: 0.78rem; }
+    .gc-track-row {
+        display: grid;
+        gap: 8px;
+    }
+    .gc-mini {
+        border-radius: 14px;
+        padding: 12px;
+        gap: 10px;
+    }
+    .gc-mini-matchup {
+        white-space: normal;
+        font-size: 0.88rem;
+    }
+}
+
 /* ============== Tier accents on mini headline ============== */
 .gc-mini-tierpill {
     display: inline-block; padding: 3px 8px; border-radius: 6px;
@@ -1077,12 +1382,49 @@ def _render_linescore_html(
     sm_game = score_map.get(sm_key) or {}
     inn = _innings_for_matchup(matchup, innings_map)
 
+    def _team_mark(label: str) -> str:
+        letters = re.sub(r"[^A-Z]", "", str(label).upper())
+        return letters[:2] if len(letters) >= 2 else (letters or "T")
+
+    def _score_style(away_runs: Any, home_runs: Any) -> Tuple[str, str]:
+        a_val = _to_int(away_runs)
+        h_val = _to_int(home_runs)
+        if a_val is None or h_val is None or a_val == h_val:
+            return "", ""
+        if a_val > h_val:
+            return "color:#4ade80;font-weight:900;", "color:#f87171;"
+        return "color:#f87171;", "color:#4ade80;font-weight:900;"
+
+    def _scoreboard_top(away_runs: Any, home_runs: Any, phase: str) -> str:
+        away_style, home_style = _score_style(away_runs, home_runs)
+        return (
+            '<div class="gc-scoreboard-top">'
+            '<div class="gc-score-team">'
+            f'<div class="gc-score-logo">{_esc(_team_mark(away_lab))}</div>'
+            f'<div class="gc-score-team-name">{_esc(away_lab)}</div>'
+            f'<div class="gc-score-num" style="{away_style}">{_esc(away_runs)}</div>'
+            '</div>'
+            '<div class="gc-score-center">'
+            f'<div class="gc-score-phase">{_esc(phase)}</div>'
+            '<div class="gc-diamond"></div>'
+            '<div class="gc-score-count">F5</div>'
+            '</div>'
+            '<div class="gc-score-team">'
+            f'<div class="gc-score-logo">{_esc(_team_mark(home_lab))}</div>'
+            f'<div class="gc-score-team-name">{_esc(home_lab)}</div>'
+            f'<div class="gc-score-num" style="{home_style}">{_esc(home_runs)}</div>'
+            '</div>'
+            '</div>'
+        )
+
     if not inn:
         # Pre-game / no data — show empty grid
         cells_a = "".join('<td class="future">-</td>' for _ in range(9))
         cells_h = "".join('<td class="future">-</td>' for _ in range(9))
         return (
             '<div class="gc-line-wrap">'
+            f'{_scoreboard_top("-", "-", "Pre")}'
+            '<div class="gc-line-main">'
             '<table class="gc-line-table"><thead><tr>'
             '<th class="team">&nbsp;</th>'
             + "".join(f'<th>{i}</th>' for i in range(1, 10))
@@ -1097,7 +1439,7 @@ def _render_linescore_html(
             '<div class="gc-inning-lab">Inning</div>'
             '<div class="gc-inning-val">Pre</div>'
             '<div class="gc-diamond"></div>'
-            '</div></div>'
+            '</div></div></div>'
         )
 
     inn_a = inn["innings_away_runs"]
@@ -1127,6 +1469,8 @@ def _render_linescore_html(
 
     return (
         '<div class="gc-line-wrap">'
+        f'{_scoreboard_top(a_R, h_R, marker_label)}'
+        '<div class="gc-line-main">'
         '<table class="gc-line-table"><thead><tr>'
         '<th class="team">&nbsp;</th>'
         + "".join(f'<th>{i}</th>' for i in range(1, 10))
@@ -1141,7 +1485,7 @@ def _render_linescore_html(
         '<div class="gc-inning-lab">Inning</div>'
         f'<div class="gc-inning-val">{_esc(marker_label)}</div>'
         '<div class="gc-diamond"></div>'
-        '</div></div>'
+        '</div></div></div>'
     )
 
 
@@ -1419,7 +1763,8 @@ def render_gamecast_hero(
         f'<div class="gc-eyebrow">{_esc(eyebrow)}</div>'
         f'<div class="gc-topbar">'
         f'<div class="gc-topbar-meta">'
-        f'<div class="gc-matchup">{_esc(matchup)}</div>'
+        f'<div class="gc-matchup gc-matchup-desktop">{_esc(matchup)}</div>'
+        f'<div class="gc-matchup gc-matchup-mobile">{_esc(_compact_matchup_label(matchup))}</div>'
         f'<div class="gc-pickline">Pick: <b>{_esc(pick)}</b></div>'
         f'</div>'
         f'{metrics_html}'
@@ -1503,7 +1848,8 @@ def render_gamecast_card(
         f'<div class="gc-eyebrow">{_esc(eyebrow)}</div>'
         f'<div class="gc-topbar">'
         f'<div class="gc-topbar-meta">'
-        f'<div class="gc-matchup gc-matchup-card">{_esc(matchup)}</div>'
+        f'<div class="gc-matchup gc-matchup-card gc-matchup-desktop">{_esc(matchup)}</div>'
+        f'<div class="gc-matchup gc-matchup-card gc-matchup-mobile">{_esc(_compact_matchup_label(matchup))}</div>'
         f'<div class="gc-pickline">Pick: <b>{_esc(pick)}</b></div>'
         f'</div>'
         f'{metrics_html}'
