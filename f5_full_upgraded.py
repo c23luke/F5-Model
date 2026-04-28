@@ -5937,7 +5937,8 @@ def main() -> None:
     render_premium_theme()
     render_gamecast_theme()
     st.markdown(
-        '<div class="main-title sa-app-title">STACKED ANALYTICS · F5</div>',
+        '<div class="main-title sa-app-title">STACKED ANALYTICS · F5</div>'
+        '<div class="sa-app-sub" style="margin-top:-0.2rem;margin-bottom:0.8rem;">Version 3</div>',
         unsafe_allow_html=True,
     )
 
