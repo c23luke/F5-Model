@@ -343,8 +343,20 @@ def _hit_probability(
 ) -> Tuple[float, str, str]:
     """
     Returns (probability_0_100, trend_label, trend_color_hex).
-    Blends model confidence with current F5 run differential and inning progress.
+
+    Live F5 win probability model:
+      - Pre-game / no data: fall back to base_confidence.
+      - F5 graded (5+ innings complete): 0 / 50 / 100 from the actual score.
+      - Live: P(pick wins F5) computed from a Poisson-Skellam model on the
+        runs each team is still expected to score in the F5 portion. The model
+        confidence still has a small influence (≤30% at first pitch, decaying
+        to 0 by the end of F5) to capture matchup edge that survives the early
+        innings. This stops the old behaviour where a team losing 5-4 in the
+        top of the 5th showed up as an 83% hit probability because the
+        pre-game model loved the matchup.
     """
+    import math
+
     if " @ " not in matchup:
         return max(0.0, min(100.0, base_confidence)), "Pre-game", "#94a3b8"
 
@@ -353,11 +365,13 @@ def _hit_probability(
     game = score_map.get(key) or {}
 
     pick_team = re.sub(r"\bF5\b", "", pick, flags=re.I).strip().lower()
+    pick_is_away = (pick_team == away.lower())
 
+    # F5 already graded — return ground truth.
     if game.get("can_grade"):
         af5 = int(game.get("away_f5", 0) or 0)
         hf5 = int(game.get("home_f5", 0) or 0)
-        if pick_team == away.lower():
+        if pick_is_away:
             won = af5 > hf5; pushed = af5 == hf5
         else:
             won = hf5 > af5; pushed = hf5 == af5
@@ -367,28 +381,84 @@ def _hit_probability(
             return 100.0, "Won", "#10b981"
         return 0.0, "Lost", "#f43f5e"
 
+    # No live data at all → pre-game model output.
     if not game:
         return max(0.0, min(100.0, base_confidence)), "Pre-game", "#94a3b8"
 
+    # ------------------------------------------------------------------ live
     af5 = int(game.get("away_f5", 0) or 0)
     hf5 = int(game.get("home_f5", 0) or 0)
-    if pick_team == away.lower():
-        run_diff = af5 - hf5
-    elif pick_team == home.lower():
-        run_diff = hf5 - af5
-    else:
-        run_diff = 0
+    pick_diff = (af5 - hf5) if pick_is_away else (hf5 - af5)
 
     inning = _to_int(game.get("current_inning")) or 1
-    inning_state = str(game.get("inning_state", "")).lower()
-    if inning_state in {"end", "bottom"}:
-        progress = min(1.0, (inning + 0.5) / 5.0)
-    else:
-        progress = min(1.0, inning / 5.0)
+    state = str(game.get("inning_state", "")).lower()
 
-    state_bonus = (run_diff * 11.0) * (0.35 + 0.65 * progress)
-    blended = (base_confidence * (1.0 - 0.35 * progress)) + (base_confidence + state_bonus) * (0.35 * progress)
-    p = max(0.0, min(100.0, blended))
+    # Half-innings remaining inside the F5 window (innings 1-5) for each side.
+    # "Top N"   → away batting bottom of N already counted? No: they're
+    #             batting NOW, bottom of N still owed. So away owes 0.5 (rest
+    #             of this top + future tops) and home owes 1.0 (full bot of
+    #             N + future bots).
+    # "Mid N" / "Bot N" → away top finished, home batting bottom in progress.
+    # "End N"   → both teams finished N.
+    if inning >= 6:
+        # Past F5 but not yet graded by `can_grade` (waiting on that flag).
+        # Just grade off current run diff.
+        if pick_diff > 0:
+            return 100.0, "Won", "#10b981"
+        if pick_diff == 0:
+            return 50.0, "Push", "#f59e0b"
+        return 0.0, "Lost", "#f43f5e"
+
+    full_after_this = max(0, 5 - inning)
+    if state == "top":
+        away_remaining = 0.5 + full_after_this
+        home_remaining = 1.0 + full_after_this
+    elif state in ("middle", "mid"):
+        away_remaining = 0.0 + full_after_this
+        home_remaining = 0.5 + full_after_this
+    elif state in ("bottom", "bot"):
+        away_remaining = 0.0 + full_after_this
+        home_remaining = 0.5 + full_after_this
+    elif state == "end":
+        away_remaining = float(full_after_this)
+        home_remaining = float(full_after_this)
+    else:
+        # Unknown state — assume top of inning has just started.
+        away_remaining = 1.0 + full_after_this
+        home_remaining = 1.0 + full_after_this
+
+    # Symmetric Poisson rate per half-inning (≈ 0.55 r/half is MLB league avg).
+    LAMBDA = 0.55
+    pick_remaining = away_remaining if pick_is_away else home_remaining
+    opp_remaining = home_remaining if pick_is_away else away_remaining
+
+    if pick_remaining <= 0 and opp_remaining <= 0:
+        # F5 effectively over.
+        if pick_diff > 0:
+            return 100.0, "Won", "#10b981"
+        if pick_diff == 0:
+            return 50.0, "Push", "#f59e0b"
+        return 0.0, "Lost", "#f43f5e"
+
+    mean_future = LAMBDA * (pick_remaining - opp_remaining)
+    var_future = LAMBDA * (pick_remaining + opp_remaining)
+    std_future = math.sqrt(max(var_future, 0.05))
+
+    # P(pick wins F5) = P(future_diff >= 1 - pick_diff)
+    # Continuity correction: cutoff at (0.5 - pick_diff).
+    threshold = 0.5 - float(pick_diff)
+    z = (threshold - mean_future) / std_future
+    # Normal survival: 1 - Φ(z) = 0.5 * erfc(z / √2)
+    p_win = 0.5 * math.erfc(z / math.sqrt(2.0))
+
+    # Tiny pull toward base_confidence — captures surviving matchup edge.
+    # Weight peaks at 0.30 pre-game and decays to 0 by F5 completion.
+    half_innings_played = max(0.0, 10.0 - (away_remaining + home_remaining))
+    progress = min(1.0, half_innings_played / 10.0)
+    prior_weight = max(0.0, 0.30 * (1.0 - progress))
+    p_blend = (1.0 - prior_weight) * p_win + prior_weight * (max(0.0, min(100.0, base_confidence)) / 100.0)
+
+    p = max(0.0, min(100.0, 100.0 * p_blend))
 
     if p >= 85:
         return p, "Very High", "#10b981"
@@ -822,17 +892,24 @@ _GAMECAST_CSS = """
 .gc-line-table td.tot {
     font-weight: 900;
     color: var(--gc-emerald);
-    font-size: 0.92rem;
-}
-.gc-line-table td.tot-h, .gc-line-table td.tot-e {
-    color: var(--gc-text-0);
-    font-weight: 800;
+    font-size: 0.96rem;
+    min-width: 38px;
 }
 .gc-line-table td.future {
     color: var(--gc-text-3);
 }
 .gc-line-table th.divider, .gc-line-table td.divider {
     border-left: 1px solid var(--gc-border);
+    padding-left: 12px;
+}
+/* With only 5 inning columns + F5 total, give each cell a bit more breathing
+   room so the grid reads as a proper scoreboard rather than a cramped strip. */
+.gc-line-table th, .gc-line-table td {
+    min-width: 28px;
+}
+.gc-line-table th.divider {
+    color: var(--gc-emerald);
+    font-size: 0.66rem;
 }
 
 .gc-inning-marker {
@@ -1240,37 +1317,79 @@ def _render_linescore_html(
     sm_game = score_map.get(sm_key) or {}
     inn = _innings_for_matchup(matchup, innings_map)
 
+    # F5-only linescore: only innings 1-5 matter for this app, so we trim the
+    # grid to 5 inning columns + an "F5" total column. Hits/Errors are dropped
+    # because they're game-totals (9 innings), not F5 totals, and would mislead.
+    F5_LEN = 5
+
     if not inn:
-        # Pre-game / no data — show empty grid
-        cells_a = "".join('<td class="future">-</td>' for _ in range(9))
-        cells_h = "".join('<td class="future">-</td>' for _ in range(9))
+        # Pre-game / no data — show empty F5 grid
+        cells_a = "".join('<td class="future">-</td>' for _ in range(F5_LEN))
+        cells_h = "".join('<td class="future">-</td>' for _ in range(F5_LEN))
+        # Try score_map first for any F5 totals already cached
+        a_f5_pre = sm_game.get("away_f5")
+        h_f5_pre = sm_game.get("home_f5")
+        a_tot = "-" if a_f5_pre in (None, "") else int(a_f5_pre)
+        h_tot = "-" if h_f5_pre in (None, "") else int(h_f5_pre)
         return (
             '<div class="gc-line-wrap">'
             '<table class="gc-line-table"><thead><tr>'
             '<th class="team">&nbsp;</th>'
-            + "".join(f'<th>{i}</th>' for i in range(1, 10))
-            + '<th class="divider">R</th><th>H</th><th>E</th>'
+            + "".join(f'<th>{i}</th>' for i in range(1, F5_LEN + 1))
+            + '<th class="divider">F5</th>'
             '</tr></thead><tbody>'
             f'<tr><td class="team">{_esc(away_lab)}</td>{cells_a}'
-            f'<td class="tot divider">-</td><td class="tot-h">-</td><td class="tot-e">-</td></tr>'
+            f'<td class="tot divider">{a_tot}</td></tr>'
             f'<tr><td class="team">{_esc(home_lab)}</td>{cells_h}'
-            f'<td class="tot divider">-</td><td class="tot-h">-</td><td class="tot-e">-</td></tr>'
+            f'<td class="tot divider">{h_tot}</td></tr>'
             '</tbody></table>'
             '<div class="gc-inning-marker">'
-            '<div class="gc-inning-lab">Inning</div>'
+            '<div class="gc-inning-lab">F5</div>'
             '<div class="gc-inning-val">Pre</div>'
             '<div class="gc-diamond"></div>'
             '</div></div>'
         )
 
-    inn_a = inn["innings_away_runs"]
-    inn_h = inn["innings_home_runs"]
-    a_R = inn["away_R"]; h_R = inn["home_R"]
-    a_H = inn["away_H"]; h_H = inn["home_H"]
-    a_E = inn["away_E"]; h_E = inn["home_E"]
+    # Slice inning-by-inning runs to only the F5 window.
+    inn_a_full = inn["innings_away_runs"] or []
+    inn_h_full = inn["innings_home_runs"] or []
+    inn_a = list(inn_a_full[:F5_LEN]) + [None] * max(0, F5_LEN - len(inn_a_full))
+    inn_h = list(inn_h_full[:F5_LEN]) + [None] * max(0, F5_LEN - len(inn_h_full))
+
+    # F5 R = sum of runs scored in innings 1-5. Prefer score_map's cached
+    # away_f5/home_f5 (already F5-aware) when present, else compute from slice.
+    def _sum_safe(vals):
+        return sum(int(v) for v in vals if v is not None)
+    a_f5 = sm_game.get("away_f5")
+    h_f5 = sm_game.get("home_f5")
+    a_R = int(a_f5) if a_f5 not in (None, "") else _sum_safe(inn_a)
+    h_R = int(h_f5) if h_f5 not in (None, "") else _sum_safe(inn_h)
+
     cur = inn.get("current_inning")
     state = (inn.get("inning_state") or "").lower()
     is_final = bool(inn.get("is_final"))
+    status_str = str(inn.get("status") or sm_game.get("status") or "").lower()
+    f5_complete = bool(sm_game.get("can_grade")) or (
+        cur is not None and (
+            int(cur) > 5
+            or (int(cur) == 5 and state in ("end", "middle", "mid", "bottom", "bot") and inn_h[4] is not None)
+        )
+    )
+
+    # Pre-game detection: API can return an `inn` stub before first pitch with
+    # no innings logged yet. Treat any of these as "not started":
+    #   - status string matches our pre-game keyword list (scheduled, warmup,
+    #     pre-game, postponed, delayed start, etc.)
+    #   - no current inning AND no innings have any runs recorded yet
+    # Use the shared phase classifier so the linescore marker stays in lockstep
+    # with the slate-level eyebrow (no "PRE / Live" mismatch).
+    phase = _phase_from_inn(inn)
+    no_runs_yet = all(v is None for v in inn_a) and all(v is None for v in inn_h)
+    is_pre_game = (
+        phase == "pre" or (
+            not is_final and not f5_complete and cur is None and no_runs_yet
+        )
+    )
 
     def _cell(val: Optional[int]) -> str:
         if val is None:
@@ -1280,11 +1399,17 @@ def _render_linescore_html(
     cells_a = "".join(_cell(v) for v in inn_a)
     cells_h = "".join(_cell(v) for v in inn_h)
 
-    if is_final:
-        marker_label = "Final"
+    # Marker: pre-game → "Pre", F5 done → "F5 Final", live → "Top/Bot/Mid/End N",
+    # unknown live state → "Live".
+    if is_pre_game:
+        marker_label = "Pre"
+    elif f5_complete or is_final:
+        marker_label = "F5 Final"
     elif cur is not None:
         prefix = {"top": "Top", "middle": "Mid", "bottom": "Bot", "end": "End"}.get(state, "")
-        marker_label = f"{prefix} {cur}".strip()
+        # Clamp display to F5 window even if inning > 5 (shouldn't happen given f5_complete check, but safe)
+        display_inning = min(int(cur), 5)
+        marker_label = f"{prefix} {display_inning}".strip()
     else:
         marker_label = "Live"
 
@@ -1292,16 +1417,16 @@ def _render_linescore_html(
         '<div class="gc-line-wrap">'
         '<table class="gc-line-table"><thead><tr>'
         '<th class="team">&nbsp;</th>'
-        + "".join(f'<th>{i}</th>' for i in range(1, 10))
-        + '<th class="divider">R</th><th>H</th><th>E</th>'
+        + "".join(f'<th>{i}</th>' for i in range(1, F5_LEN + 1))
+        + '<th class="divider">F5</th>'
         '</tr></thead><tbody>'
         f'<tr><td class="team">{_esc(away_lab)}</td>{cells_a}'
-        f'<td class="tot divider">{a_R}</td><td class="tot-h">{a_H}</td><td class="tot-e">{a_E}</td></tr>'
+        f'<td class="tot divider">{a_R}</td></tr>'
         f'<tr><td class="team">{_esc(home_lab)}</td>{cells_h}'
-        f'<td class="tot divider">{h_R}</td><td class="tot-h">{h_H}</td><td class="tot-e">{h_E}</td></tr>'
+        f'<td class="tot divider">{h_R}</td></tr>'
         '</tbody></table>'
         '<div class="gc-inning-marker">'
-        '<div class="gc-inning-lab">Inning</div>'
+        '<div class="gc-inning-lab">F5</div>'
         f'<div class="gc-inning-val">{_esc(marker_label)}</div>'
         '<div class="gc-diamond"></div>'
         '</div></div>'
